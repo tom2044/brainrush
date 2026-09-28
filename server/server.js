@@ -693,7 +693,7 @@ function setupSocket(io) {
 const app = express();
 app.use(cors());
 
-const clientDir = path.join(__dirname, '..', 'client');
+const clientDir = path.join(__dirname, 'client');
 app.use(express.static(clientDir));
 
 app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));

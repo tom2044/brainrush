@@ -1,0 +1,712 @@
+'use strict';
+
+const path = require('path');
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
+const { Server } = require('socket.io');
+const { v4: uuid } = require('uuid');
+
+/* ============================================================
+   CONFIG
+   ============================================================ */
+const CFG = {
+  PORT: process.env.PORT || 4000,
+  MAX_REGISTERED_TEAMS: 100,
+  MIN_TEAMS_TO_START: 2,
+  R1_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+  R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+  R3_CORRECT: 10,
+  R3_STEAL: 15,
+  R3_FAIL: -5,
+  R4_CORRECT: 20,
+  R4_WRONG: -10,
+  REVEAL_MS: 4000,
+  BUZZ_WINDOW_MS: 8000,
+  CHALLENGE_MS: 10000,
+  INSTR_SEC: 300,
+  ROUND_INTRO_MS: 3000,
+  TICK_MS: 100,
+  ROUND_CUTS: { 1: 2, 2: 2, 3: 4 }
+};
+
+/* ============================================================
+   QUESTIONS
+   ============================================================ */
+function seedQuestions() {
+  const out = [];
+
+  const R1 = [
+    ['Height of the Statue of Unity (m)', 182, 'm'],
+    ['Year the first iPhone was released', 2007, ''],
+    ['Bones in an adult human body', 206, ''],
+    ['Population of India 2024 (crores)', 144, 'crore'],
+    ['Average Earth-Sun distance (million km)', 150, 'M km'],
+    ['Keys on a standard piano', 88, '']
+  ];
+  R1.forEach(([t, a, u], i) => out.push({
+    id: 'r1q' + (i + 1), roundNumber: 1, order: i + 1, type: 'closest_guess',
+    text: t, correctAnswer: a, unit: u, points: 10, timeLimitSec: 45, isActive: true
+  }));
+
+  const R2 = [
+    ['Capital of Australia?', ['Sydney', 'Canberra', 'Melbourne', 'Perth'], 1],
+    ['Which planet is the Red Planet?', ['Venus', 'Mars', 'Jupiter', 'Mercury'], 1],
+    ['Chemical symbol for gold?', ['Go', 'Gd', 'Au', 'Ag'], 2],
+    ['Who wrote "Romeo and Juliet"?', ['Dickens', 'Shakespeare', 'Austen', 'Twain'], 1],
+    ['Largest ocean on Earth?', ['Atlantic', 'Indian', 'Arctic', 'Pacific'], 3],
+    ['How many continents?', ['5', '6', '7', '8'], 2],
+    ['H2O is the formula for...', ['Salt', 'Water', 'Sugar', 'Oxygen'], 1],
+    ['Fastest land animal?', ['Lion', 'Cheetah', 'Horse', 'Greyhound'], 1],
+    ['Currency of Japan?', ['Won', 'Yuan', 'Yen', 'Ringgit'], 2],
+    ['Who painted the Mona Lisa?', ['Michelangelo', 'Raphael', 'da Vinci', 'Donatello'], 2]
+  ];
+  R2.forEach(([t, o, a], i) => out.push({
+    id: 'r2q' + (i + 1), roundNumber: 2, order: i + 1, type: 'mcq',
+    text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 20, isActive: true
+  }));
+
+  const R3 = [
+    ['Largest planet?', ['Saturn', 'Jupiter', 'Neptune', 'Earth'], 1],
+    ['Longest river in the world?', ['Amazon', 'Yangtze', 'Nile', 'Mississippi'], 2],
+    ['Smallest prime number?', ['0', '1', '2', '3'], 2],
+    ['Square root of 144?', ['11', '12', '13', '14'], 1],
+    ['Who invented the telephone?', ['Edison', 'Tesla', 'Bell', 'Marconi'], 2],
+    ['Boiling point of water at sea level (C)?', ['90', '95', '100', '105'], 2],
+    ['Sides on a hexagon?', ['5', '6', '7', '8'], 1],
+    ['Author of Harry Potter?', ['Tolkien', 'Rowling', 'Dahl', 'Lewis'], 1],
+    ['Gas plants primarily absorb?', ['Oxygen', 'Nitrogen', 'CO2', 'Hydrogen'], 2],
+    ['Capital of Canada?', ['Toronto', 'Vancouver', 'Ottawa', 'Montreal'], 2],
+    ['7 x 8 = ?', ['54', '56', '58', '64'], 1],
+    ['WWII ended in...', ['1943', '1944', '1945', '1946'], 2],
+    ['Largest hot desert?', ['Gobi', 'Kalahari', 'Sahara', 'Arabian'], 2],
+    ['Chemical symbol for sodium?', ['So', 'Sd', 'Na', 'Ni'], 2],
+    ['Minutes in a day?', ['1200', '1380', '1440', '1500'], 2],
+    ['Hardest natural substance?', ['Gold', 'Iron', 'Diamond', 'Quartz'], 2],
+    ['First man on the moon?', ['Aldrin', 'Gagarin', 'Armstrong', 'Collins'], 2],
+    ['CPU stands for?', ['Central Process Unit', 'Central Processing Unit', 'Computer Personal Unit', 'Central Processor Union'], 1]
+  ];
+  R3.forEach(([t, o, a], i) => out.push({
+    id: 'r3q' + (i + 1), roundNumber: 3, order: i + 1, type: 'mcq',
+    text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
+  }));
+
+  const R4 = [
+    ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
+    ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
+    ['Largest mammal?', ['Elephant', 'Blue whale', 'Giraffe', 'Hippo'], 1],
+    ['9 x 9 = ?', ['72', '79', '81', '89'], 2],
+    ['Largest country by area?', ['Canada', 'China', 'USA', 'Russia'], 3],
+    ['Chemical symbol for iron?', ['Ir', 'In', 'Fe', 'Fr'], 2],
+    ['Colors in a rainbow?', ['5', '6', '7', '8'], 2],
+    ['Square root of 225?', ['12', '13', '14', '15'], 3],
+    ['Planet with the most moons?', ['Jupiter', 'Saturn', 'Uranus', 'Neptune'], 1],
+    ['Theory of relativity by?', ['Newton', 'Einstein', 'Bohr', 'Hawking'], 1]
+  ];
+  R4.forEach(([t, o, a], i) => out.push({
+    id: 'r4q' + (i + 1), roundNumber: 4, order: i + 1, type: 'mcq',
+    text: t, options: o, correctAnswer: a, points: 20, timeLimitSec: 15, isActive: true
+  }));
+
+  return out;
+}
+
+/* ============================================================
+   GAME ENGINE
+   ============================================================ */
+class Game {
+  constructor(onChange) {
+    this.onChange = onChange || (() => {});
+    this.questions = seedQuestions();
+    this.session = this.blankSession();
+    this.teams = [];
+    this.answers = [];
+  }
+
+  blankSession() {
+    return {
+      state: 'LOBBY', round: 0, qIndex: 0, currentQuestionId: null,
+      activeTeamIds: [], activeTeamId: null,
+      questionStartedAt: null, questionEndsAt: null, revealEndsAt: null,
+      buzzerLockedByTeamId: null, buzzerLockEndsAt: null,
+      challenge: null, lastReveal: null, instructionsEndsAt: null
+    };
+  }
+
+  roundQuestions(r) {
+    return this.questions.filter(q => q.roundNumber === r && q.isActive)
+      .sort((a, b) => a.order - b.order);
+  }
+  currentQuestion() {
+    return this.roundQuestions(this.session.round)[this.session.qIndex] || null;
+  }
+  team(id) { return this.teams.find(t => t.id === id) || null; }
+  leaderboard(ids) {
+    const list = ids || this.session.activeTeamIds;
+    return this.teams.filter(t => list.includes(t.id)).slice()
+      .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
+                   || (a.latency || 0) - (b.latency || 0));
+  }
+  addPoints(teamId, round, pts) {
+    const t = this.team(teamId);
+    if (!t) return;
+    t.points['r' + round] = (t.points['r' + round] || 0) + pts;
+    t.points.total = (t.points.total || 0) + pts;
+  }
+  allAnswered(q) {
+    return this.session.activeTeamIds.every(tid =>
+      this.answers.some(a => a.questionId === q.id && a.teamId === tid));
+  }
+
+  registerTeam({ teamName, students }) {
+    if (!teamName || !Array.isArray(students) || students.length !== 2)
+      return { ok: false, reason: 'Invalid team data' };
+    if (this.teams.some(t => t.teamName.toLowerCase() === teamName.toLowerCase()))
+      return { ok: false, reason: 'Team name already taken' };
+    if (this.teams.length >= CFG.MAX_REGISTERED_TEAMS)
+      return { ok: false, reason: 'Registration full' };
+    const team = {
+      id: uuid(), teamName, students, status: 'registered',
+      points: { r1: 0, r2: 0, r3: 0, r4: 0, total: 0 },
+      latency: 0, eliminatedInRound: null, finalRank: null,
+      instructionsAck: false, joinedAt: Date.now(), connected: true
+    };
+    this.teams.push(team);
+    this.onChange();
+    return { ok: true, teamId: team.id };
+  }
+
+  ackInstructions(teamId) {
+    const t = this.team(teamId);
+    if (t) { t.instructionsAck = true; this.onChange(); }
+  }
+
+  submitAnswer({ teamId, questionId, answer }) {
+    const s = this.session;
+    if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
+    const q = this.currentQuestion();
+    if (!q || q.id !== questionId) return { ok: false, reason: 'Stale question' };
+    if (!s.activeTeamIds.includes(teamId)) return { ok: false, reason: 'Not in play' };
+    if (this.answers.some(a => a.questionId === questionId && a.teamId === teamId))
+      return { ok: false, reason: 'Already answered' };
+    if (s.round === 3) {
+      if (s.challenge && s.challenge.questionId === questionId) {
+        if (teamId !== s.challenge.challengerId) return { ok: false, reason: 'Not your turn' };
+      } else if (teamId !== s.activeTeamId) return { ok: false, reason: 'Not your turn' };
+    }
+    if (s.round === 4 && s.buzzerLockedByTeamId !== teamId)
+      return { ok: false, reason: 'Buzzer not yours' };
+
+    const receivedAt = Date.now();
+    const rec = {
+      id: uuid(), questionId, teamId, roundNumber: s.round,
+      rawAnswer: answer, receivedAt,
+      latencyMs: receivedAt - (s.questionStartedAt || receivedAt),
+      isCorrect: false, pointsAwarded: 0,
+      wasChallenge: !!(s.challenge && s.challenge.challengerId === teamId),
+      guessDelta: null
+    };
+    this.answers.push(rec);
+    const t = this.team(teamId);
+    if (t) t.latency += rec.latencyMs;
+
+    if (s.round === 3) this.evalR3Single(rec, q);
+    else if (s.round === 4) this.evalR4Single(rec, q);
+    else if (this.allAnswered(q)) this.finishQuestion();
+    else this.onChange();
+    return { ok: true };
+  }
+
+  buzz({ teamId, questionId }) {
+    const s = this.session;
+    if (s.round !== 4 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
+    const q = this.currentQuestion();
+    if (!q || q.id !== questionId) return { ok: false };
+    if (!s.activeTeamIds.includes(teamId)) return { ok: false };
+    if (s.buzzerLockedByTeamId) {
+      const owner = this.team(s.buzzerLockedByTeamId);
+      return { ok: false, reason: owner ? owner.teamName + ' buzzed first' : 'Already locked' };
+    }
+    s.buzzerLockedByTeamId = teamId;
+    s.buzzerLockEndsAt = Date.now() + CFG.BUZZ_WINDOW_MS;
+    this.onChange();
+    return { ok: true };
+  }
+
+  challenge({ teamId, questionId }) {
+    const s = this.session;
+    if (s.round !== 3 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
+    const q = this.currentQuestion();
+    if (!q || q.id !== questionId) return { ok: false };
+    if (teamId === s.activeTeamId) return { ok: false, reason: 'Active team cannot challenge' };
+    if (!s.activeTeamIds.includes(teamId)) return { ok: false };
+    if (s.challenge && s.challenge.questionId === questionId)
+      return { ok: false, reason: 'Already challenged' };
+    s.challenge = { questionId, challengerId: teamId, endsAt: Date.now() + CFG.CHALLENGE_MS };
+    this.onChange();
+    return { ok: true };
+  }
+
+  approveTeam(teamId, yes) {
+    const t = this.team(teamId);
+    if (!t) return;
+    t.status = yes ? 'approved' : 'registered';
+    this.onChange();
+  }
+  deleteTeam(teamId) {
+  const idx = this.teams.findIndex(t => t.id === teamId);
+  if (idx === -1) return { ok: false, reason: 'Team not found' };
+  const teamName = this.teams[idx].teamName;
+  this.teams.splice(idx, 1);
+  // Clean up any answers from this team
+  this.answers = this.answers.filter(a => a.teamId !== teamId);
+  // Remove from active teams if in play
+  this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
+  if (this.session.activeTeamId === teamId) {
+    this.session.activeTeamId = this.session.activeTeamIds[0] || null;
+  }
+  // Clear buzzer lock if held by this team
+  if (this.session.buzzerLockedByTeamId === teamId) {
+    this.session.buzzerLockedByTeamId = null;
+    this.session.buzzerLockEndsAt = null;
+  }
+  // Clear challenge if held by this team
+  if (this.session.challenge && this.session.challenge.challengerId === teamId) {
+    this.session.challenge = null;
+  }
+  this.onChange();
+  return { ok: true, teamName };
+}
+  approveAll() {
+    this.teams.forEach(t => { if (t.status === 'registered') t.status = 'approved'; });
+    this.onChange();
+  }
+  sendToInstructions() {
+    this.session.state = 'INSTRUCTIONS';
+    this.session.instructionsEndsAt = Date.now() + CFG.INSTR_SEC * 1000;
+    this.onChange();
+  }
+  closeInstructions() { this.session.state = 'LOBBY'; this.onChange(); }
+
+  startRound(n) {
+    const s = this.session;
+    const approved = this.teams.filter(t => t.status === 'approved' || t.status === 'active');
+    if (approved.length < CFG.MIN_TEAMS_TO_START)
+      return { ok: false, reason: 'Need at least ' + CFG.MIN_TEAMS_TO_START + ' approved teams' };
+    s.round = n; s.qIndex = 0; s.state = 'ROUND_INTRO';
+    s.activeTeamIds = approved.map(t => t.id);
+    s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
+    s.lastReveal = null; s.challenge = null;
+    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null;
+    s.currentQuestionId = null;
+    approved.forEach(t => { t.status = 'active'; });
+    this.onChange();
+    setTimeout(() => {
+      if (this.session.state === 'ROUND_INTRO' && this.session.round === n) this.showQuestion();
+    }, CFG.ROUND_INTRO_MS);
+    return { ok: true };
+  }
+
+  showQuestion() {
+    const s = this.session;
+    const q = this.currentQuestion();
+    if (!q) return this.endRound();
+    s.state = 'QUESTION_ACTIVE';
+    s.currentQuestionId = q.id;
+    s.questionStartedAt = Date.now();
+    s.questionEndsAt = Date.now() + q.timeLimitSec * 1000;
+    s.revealEndsAt = null; s.lastReveal = null; s.challenge = null;
+    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null;
+    this.onChange();
+  }
+
+  nextQuestion() {
+    const s = this.session;
+    const qs = this.roundQuestions(s.round);
+    if (s.qIndex + 1 >= qs.length) return this.endRound();
+    s.qIndex += 1;
+    if (s.round === 3 && s.activeTeamIds.length) {
+      const idx = s.activeTeamIds.indexOf(s.activeTeamId);
+      s.activeTeamId = s.activeTeamIds[(idx + 1) % s.activeTeamIds.length];
+    }
+    this.showQuestion();
+  }
+
+  finishQuestion() {
+    const s = this.session;
+    if (s.round === 1) this.evalR1();
+    else if (s.round === 2) this.evalR2();
+    s.state = 'QUESTION_REVEAL';
+    s.revealEndsAt = Date.now() + CFG.REVEAL_MS;
+    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null; s.challenge = null;
+    this.onChange();
+  }
+
+  endRound() {
+    const s = this.session;
+    s.state = 'ROUND_END';
+    if (s.round < 4) {
+      const cut = CFG.ROUND_CUTS[s.round] || 0;
+      const lb = this.leaderboard();
+      if (cut > 0 && lb.length > cut) {
+        const eliminated = lb.slice(lb.length - cut);
+        const survivors = lb.slice(0, lb.length - cut);
+        eliminated.forEach(t => { t.status = 'eliminated'; t.eliminatedInRound = s.round; });
+        s.activeTeamIds = survivors.map(t => t.id);
+      }
+    } else {
+      const lb = this.leaderboard();
+      lb.forEach((t, i) => { t.status = 'winner'; t.finalRank = i + 1; });
+      s.state = 'FINISHED';
+    }
+    this.onChange();
+  }
+
+  endSession() {
+    const lb = this.leaderboard(this.teams.filter(t => t.status !== 'registered').map(t => t.id));
+    lb.forEach((t, i) => { t.status = 'winner'; t.finalRank = i + 1; });
+    this.session.state = 'FINISHED';
+    this.onChange();
+  }
+
+  resetSession() {
+    this.session = this.blankSession();
+    this.answers = [];
+    this.teams.forEach(t => {
+      t.points = { r1: 0, r2: 0, r3: 0, r4: 0, total: 0 };
+      t.latency = 0; t.eliminatedInRound = null; t.finalRank = null;
+      if (t.status !== 'registered') t.status = 'approved';
+    });
+    this.onChange();
+  }
+
+  clearAll() {
+    this.session = this.blankSession();
+    this.teams = []; this.answers = [];
+    this.questions = seedQuestions();
+    this.onChange();
+  }
+
+  evalR1() {
+    const q = this.currentQuestion();
+    const answers = this.answers.filter(a => a.questionId === q.id);
+    const scored = answers
+      .map(a => ({ a, delta: Math.abs(Number(a.rawAnswer) - Number(q.correctAnswer)) }))
+      .filter(x => isFinite(x.delta))
+      .sort((x, y) => x.delta - y.delta);
+    scored.forEach((x, i) => {
+      x.a.guessDelta = x.delta;
+      x.a.isCorrect = x.delta === 0;
+      x.a.pointsAwarded = CFG.R1_SCALE[i] != null ? CFG.R1_SCALE[i] : 1;
+      this.addPoints(x.a.teamId, 1, x.a.pointsAwarded);
+    });
+    this.session.lastReveal = {
+      questionId: q.id, correctAnswer: q.correctAnswer, unit: q.unit,
+      results: scored.map(x => ({ teamId: x.a.teamId, delta: x.delta, points: x.a.pointsAwarded })),
+      note: 'CLOSEST GUESS'
+    };
+  }
+
+  evalR2() {
+    const q = this.currentQuestion();
+    const answers = this.answers.filter(a => a.questionId === q.id);
+    const correct = answers.filter(a => a.rawAnswer === q.correctAnswer)
+      .sort((a, b) => a.receivedAt - b.receivedAt);
+    correct.forEach((a, i) => {
+      a.isCorrect = true;
+      a.pointsAwarded = CFG.R2_SCALE[i] != null ? CFG.R2_SCALE[i] : 1;
+      this.addPoints(a.teamId, 2, a.pointsAwarded);
+    });
+    this.session.lastReveal = {
+      questionId: q.id, correctAnswer: q.correctAnswer,
+      results: correct.map((a, i) => ({ teamId: a.teamId, rank: i + 1, latencyMs: a.latencyMs, points: a.pointsAwarded })),
+      note: 'FASTEST FINGER'
+    };
+  }
+
+  evalR3Single(rec, q) {
+    const ok = rec.rawAnswer === q.correctAnswer;
+    rec.isCorrect = ok;
+    if (rec.wasChallenge) {
+      rec.pointsAwarded = ok ? CFG.R3_STEAL : CFG.R3_FAIL;
+      this.addPoints(rec.teamId, 3, rec.pointsAwarded);
+      this.session.lastReveal = {
+        questionId: q.id, correctAnswer: q.correctAnswer,
+        results: [{ teamId: rec.teamId, correct: ok, points: rec.pointsAwarded, challenge: true }],
+        note: ok ? 'CHALLENGE STOLEN!' : 'CHALLENGE FAILED'
+      };
+    } else {
+      rec.pointsAwarded = ok ? CFG.R3_CORRECT : 0;
+      this.addPoints(rec.teamId, 3, rec.pointsAwarded);
+      this.session.lastReveal = {
+        questionId: q.id, correctAnswer: q.correctAnswer,
+        results: [{ teamId: rec.teamId, correct: ok, points: rec.pointsAwarded }],
+        note: ok ? 'CORRECT' : 'WRONG'
+      };
+    }
+    this.finishQuestion();
+  }
+
+  evalR4Single(rec, q) {
+    const ok = rec.rawAnswer === q.correctAnswer;
+    rec.isCorrect = ok;
+    rec.pointsAwarded = ok ? CFG.R4_CORRECT : CFG.R4_WRONG;
+    this.addPoints(rec.teamId, 4, rec.pointsAwarded);
+    this.session.lastReveal = {
+      questionId: q.id, correctAnswer: q.correctAnswer,
+      results: [{ teamId: rec.teamId, correct: ok, points: rec.pointsAwarded, buzzer: true }],
+      note: ok ? 'BUZZER CORRECT!' : 'BUZZER WRONG'
+    };
+    this.finishQuestion();
+  }
+
+  addQuestion(o) {
+    const rq = this.roundQuestions(o.roundNumber);
+    const order = rq.length ? Math.max(...rq.map(q => q.order)) + 1 : 1;
+    const q = {
+      id: uuid(), roundNumber: o.roundNumber, order,
+      type: o.type, text: o.text,
+      options: o.type === 'mcq' ? o.options : undefined,
+      correctAnswer: o.correctAnswer, unit: o.unit || '',
+      points: o.points || 10, timeLimitSec: o.timeLimitSec || 30,
+      isActive: true, editedAt: null
+    };
+    this.questions.push(q);
+    this.onChange();
+    return q;
+  }
+
+  editQuestion(id, patch) {
+    const q = this.questions.find(x => x.id === id);
+    if (!q) return;
+    Object.assign(q, patch, { editedAt: Date.now() });
+    this.onChange();
+  }
+
+  deleteQuestion(id) {
+    const idx = this.questions.findIndex(q => q.id === id);
+    if (idx === -1) return;
+    const r = this.questions[idx].roundNumber;
+    this.questions.splice(idx, 1);
+    this.roundQuestions(r).forEach((q, i) => { q.order = i + 1; });
+    this.onChange();
+  }
+
+  moveQuestion(id, direction) {
+    const q = this.questions.find(x => x.id === id);
+    if (!q) return;
+    const rq = this.roundQuestions(q.roundNumber);
+    const idx = rq.findIndex(x => x.id === id);
+    const swap = direction === 'up' ? idx - 1 : idx + 1;
+    if (swap < 0 || swap >= rq.length) return;
+    const tmp = rq[idx].order;
+    rq[idx].order = rq[swap].order;
+    rq[swap].order = tmp;
+    this.onChange();
+  }
+
+  tick() {
+    const s = this.session;
+    const n = Date.now();
+    if (s.state === 'QUESTION_ACTIVE') {
+      const q = this.currentQuestion();
+      if (!q) return false;
+      if (s.round === 4 && s.buzzerLockedByTeamId && s.buzzerLockEndsAt && n >= s.buzzerLockEndsAt) {
+        const lockedId = s.buzzerLockedByTeamId;
+        this.addPoints(lockedId, 4, CFG.R4_WRONG);
+        s.lastReveal = {
+          questionId: q.id, correctAnswer: q.correctAnswer,
+          results: [{ teamId: lockedId, correct: false, points: CFG.R4_WRONG, timeout: true }],
+          note: 'BUZZER TIMEOUT'
+        };
+        this.finishQuestion();
+        return true;
+      }
+      if (s.round === 3 && s.challenge && n >= s.challenge.endsAt) {
+        const cid = s.challenge.challengerId;
+        this.addPoints(cid, 3, CFG.R3_FAIL);
+        s.lastReveal = {
+          questionId: q.id, correctAnswer: q.correctAnswer,
+          results: [{ teamId: cid, correct: false, points: CFG.R3_FAIL, challenge: true, timeout: true }],
+          note: 'CHALLENGE TIMEOUT'
+        };
+        this.finishQuestion();
+        return true;
+      }
+      if (s.questionEndsAt && n >= s.questionEndsAt) {
+        this.finishQuestion();
+        return true;
+      }
+    } else if (s.state === 'QUESTION_REVEAL') {
+      if (s.revealEndsAt && n >= s.revealEndsAt) { this.nextQuestion(); return true; }
+    } else if (s.state === 'INSTRUCTIONS') {
+      if (s.instructionsEndsAt && n >= s.instructionsEndsAt) { s.state = 'LOBBY'; return true; }
+    }
+    return false;
+  }
+}
+
+/* ============================================================
+   SOCKET SANITIZATION
+   ============================================================ */
+function sanitizeForTeam(db) {
+  const out = JSON.parse(JSON.stringify(db));
+  if (out.session.state === 'QUESTION_ACTIVE') {
+    const cq = out.session.currentQuestionId;
+    out.questions = out.questions.map(q => {
+      if (q.id === cq) {
+        const copy = { ...q };
+        delete copy.correctAnswer;
+        return copy;
+      }
+      return q;
+    });
+  }
+  return out;
+}
+
+function snapshot(game, role) {
+  const db = {
+    session: game.session, questions: game.questions,
+    teams: game.teams, answers: game.answers
+  };
+  if (role === 'admin') return db;
+  return sanitizeForTeam(db);
+}
+
+/* ============================================================
+   SOCKET.IO
+   ============================================================ */
+function setupSocket(io) {
+  const game = new Game(() => broadcast());
+  io.game = game;
+  const socketTeam = new Map();
+
+  function broadcast() {
+    io.to('admin').emit('state', snapshot(game, 'admin'));
+    for (const [socketId] of socketTeam.entries()) {
+      const s = io.sockets.sockets.get(socketId);
+      if (s) s.emit('state', snapshot(game, 'team'));
+    }
+  }
+
+  setInterval(() => { if (game.tick()) broadcast(); }, CFG.TICK_MS);
+
+  io.on('connection', (socket) => {
+    socket.on('role:admin', () => {
+      socket.join('admin');
+      socket.data.role = 'admin';
+      socket.emit('state', snapshot(game, 'admin'));
+    });
+
+    socket.on('role:team', ({ teamId } = {}) => {
+      socket.data.role = 'team';
+      if (teamId && game.team(teamId)) {
+        const t = game.team(teamId);
+        t.connected = true;
+        socketTeam.set(socket.id, teamId);
+        socket.data.teamId = teamId;
+        socket.emit('state', snapshot(game, 'team'));
+        broadcast();
+        return;
+      }
+      socket.emit('state', snapshot(game, 'team'));
+    });
+
+    socket.on('team:register', ({ teamName, students }, ack) => {
+      const result = game.registerTeam({ teamName, students });
+      if (!result.ok) return ack && ack(result);
+      socketTeam.set(socket.id, result.teamId);
+      socket.data.teamId = result.teamId;
+      socket.data.role = 'team';
+      broadcast();
+      ack && ack({ ok: true, teamId: result.teamId });
+    });
+
+    socket.on('team:ackInstructions', () => {
+      const tid = socket.data.teamId;
+      if (tid) game.ackInstructions(tid);
+    });
+
+    socket.on('team:answer', ({ questionId, answer }, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.submitAnswer({ teamId: tid, questionId, answer }));
+    });
+
+    socket.on('team:buzz', ({ questionId }, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.buzz({ teamId: tid, questionId }));
+    });
+
+    socket.on('team:challenge', ({ questionId }, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.challenge({ teamId: tid, questionId }));
+    });
+
+    const adminGuard = (fn) => (...args) => {
+      if (socket.data.role !== 'admin') return;
+      fn(...args);
+    };
+
+    socket.on('admin:approveTeam',        adminGuard(({ teamId, yes }) => game.approveTeam(teamId, yes)));
+    socket.on('admin:approveAll',         adminGuard(() => game.approveAll()));
+    socket.on('admin:deleteTeam',         adminGuard(({ teamId }, ack) => {
+  const r = game.deleteTeam(teamId);
+  ack && ack(r);
+}));
+    socket.on('admin:sendToInstructions', adminGuard(() => game.sendToInstructions()));
+    socket.on('admin:closeInstructions',  adminGuard(() => game.closeInstructions()));
+    socket.on('admin:startRound',         adminGuard(({ round }, ack) => {
+      const r = game.startRound(round);
+      ack && ack(r);
+    }));
+    socket.on('admin:nextQuestion', adminGuard(() => game.nextQuestion()));
+    socket.on('admin:forceReveal',  adminGuard(() => game.finishQuestion()));
+    socket.on('admin:endSession',   adminGuard(() => game.endSession()));
+    socket.on('admin:resetSession', adminGuard(() => game.resetSession()));
+    socket.on('admin:clearAll',     adminGuard(() => game.clearAll()));
+    socket.on('admin:question:add',    adminGuard((p) => game.addQuestion(p)));
+    socket.on('admin:question:edit',   adminGuard(({ id, patch }) => game.editQuestion(id, patch)));
+    socket.on('admin:question:delete', adminGuard(({ id }) => game.deleteQuestion(id)));
+    socket.on('admin:question:move',   adminGuard(({ id, direction }) => game.moveQuestion(id, direction)));
+
+    socket.on('disconnect', () => {
+      const tid = socketTeam.get(socket.id);
+      if (tid) {
+        socketTeam.delete(socket.id);
+        const t = game.team(tid);
+        if (t) t.connected = false;
+        broadcast();
+      }
+    });
+  });
+
+  return game;
+}
+
+/* ============================================================
+   BOOTSTRAP
+   ============================================================ */
+const app = express();
+app.use(cors());
+
+const clientDir = path.join(__dirname, '..', 'client');
+app.use(express.static(clientDir));
+
+app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+app.get('*', (req, res) => res.sendFile(path.join(clientDir, 'index.html')));
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*' },
+  transports: ['websocket', 'polling']
+});
+
+setupSocket(io);
+
+server.listen(CFG.PORT, () => {
+  console.log('BRAINRUSH server listening on http://localhost:' + CFG.PORT);
+});

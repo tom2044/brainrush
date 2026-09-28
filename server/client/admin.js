@@ -94,9 +94,9 @@ const Admin = {
   leaderboard(showAll) {
     const db = this.state;
     const ids = showAll
-      ? db.teams.filter(t => t.status !== 'registered').map(t => t.id)
+      ? db.teams.filter(t => t.status !== 'registered' && t.status !== 'disqualified').map(t => t.id)
       : (db.session.activeTeamIds.length ? db.session.activeTeamIds
-          : db.teams.filter(t => t.status !== 'registered').map(t => t.id));
+          : db.teams.filter(t => t.status !== 'registered' && t.status !== 'disqualified').map(t => t.id));
     return db.teams.filter(t => ids.includes(t.id)).slice()
       .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
                    || (a.latency || 0) - (b.latency || 0));
@@ -362,20 +362,22 @@ const Admin = {
   renderTeams(c) {
     const db = this.state;
     const groups = {
-      pending:    db.teams.filter(t => t.status === 'registered'),
-      approved:   db.teams.filter(t => t.status === 'approved' || t.status === 'active'),
-      eliminated: db.teams.filter(t => t.status === 'eliminated'),
-      winners:    db.teams.filter(t => t.status === 'winner')
+      pending:      db.teams.filter(t => t.status === 'registered'),
+      approved:     db.teams.filter(t => t.status === 'approved' || t.status === 'active'),
+      eliminated:   db.teams.filter(t => t.status === 'eliminated'),
+      disqualified: db.teams.filter(t => t.status === 'disqualified'),
+      winners:      db.teams.filter(t => t.status === 'winner')
     };
 
     const row = (t) => {
       let tag = '<span class="tag no">Pending</span>';
-      if (t.status === 'approved')   tag = '<span class="tag ok">Approved</span>';
-      if (t.status === 'active')     tag = '<span class="tag ok">In Play</span>';
-      if (t.status === 'eliminated') tag = `<span class="tag out">Out R${t.eliminatedInRound || '?'}</span>`;
-      if (t.status === 'winner')     tag = `<span class="tag ok">#${t.finalRank || '?'}</span>`;
+      if (t.status === 'approved')     tag = '<span class="tag ok">Approved</span>';
+      if (t.status === 'active')       tag = '<span class="tag ok">In Play</span>';
+      if (t.status === 'eliminated')   tag = `<span class="tag out">Out R${t.eliminatedInRound || '?'}</span>`;
+      if (t.status === 'disqualified') tag = '<span class="tag out" style="background:rgba(255,71,87,.3);color:#fff">DISQUALIFIED</span>';
+      if (t.status === 'winner')       tag = `<span class="tag ok">#${t.finalRank || '?'}</span>`;
       return `
-        <div class="team-row ${t.status !== 'registered' ? 'approved' : ''} ${t.status === 'eliminated' ? 'eliminated' : ''}">
+        <div class="team-row ${t.status !== 'registered' ? 'approved' : ''} ${t.status === 'eliminated' ? 'eliminated' : ''} ${t.status === 'disqualified' ? 'disqualified' : ''}">
           <div>
             <div class="name">${esc(t.teamName)}</div>
             <div class="roll">${esc(t.students[0].name)} (${esc(t.students[0].rollNumber)}) · ${esc(t.students[1].name)} (${esc(t.students[1].rollNumber)})</div>
@@ -402,6 +404,7 @@ const Admin = {
           <h3>APPROVED (${groups.approved.length})</h3>
           ${groups.approved.length ? groups.approved.map(row).join('') : '<p class="muted small">None yet.</p>'}
           ${groups.eliminated.length ? `<div class="divider"></div><h3>ELIMINATED (${groups.eliminated.length})</h3>${groups.eliminated.map(row).join('')}` : ''}
+          ${groups.disqualified.length ? `<div class="divider"></div><h3 style="color:var(--danger-red)">DISQUALIFIED (${groups.disqualified.length})</h3>${groups.disqualified.map(row).join('')}` : ''}
           ${groups.winners.length ? `<div class="divider"></div><h3>WINNERS</h3>${groups.winners.map(row).join('')}` : ''}
         </div>
       </div>`;

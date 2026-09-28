@@ -20,7 +20,8 @@ const CFG = {
   R4_CORRECT: 20, R4_WRONG: -10,
   REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
   INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
-  ROUND_CUTS: { 1: 2, 2: 2, 3: 4 }
+  ROUND_CUTS: { 1: 2, 2: 2, 3: 4 },
+  DISQUALIFY_GRACE_MS: 3000,
 };
 
 /* ============================================================
@@ -35,9 +36,9 @@ const MAX_ADMIN_SLOTS = 3;
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SESSION_GRACE_MS = 30 * 1000;
 
-const otpStore = new Map();       // mobile -> { otp, expiresAt }
-const adminSessions = new Map();  // token -> { adminId, socketId, lastSeen }
-const adminByMobile = new Map();  // mobile -> token
+const otpStore = new Map();
+const adminSessions = new Map();
+const adminByMobile = new Map();
 
 function findAdminByMobile(mobile) {
   return ADMINS.find(a => a.mobile === mobile) || null;
@@ -269,6 +270,7 @@ class Game {
   approveTeam(teamId, yes) {
     const t = this.team(teamId);
     if (!t) return;
+    if (yes && t.status === 'disqualified') return;
     t.status = yes ? 'approved' : 'registered';
     this.onChange();
   }
@@ -295,6 +297,26 @@ class Game {
     }
     this.onChange();
     return { ok: true, teamName };
+  }
+  disqualifyTeam(teamId) {
+    const t = this.team(teamId);
+    if (!t) return;
+    if (t.status === 'disqualified') return;
+    t.status = 'disqualified';
+    t.disqualifiedAt = Date.now();
+    t.eliminatedInRound = this.session.round || null;
+    this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
+    if (this.session.activeTeamId === teamId) {
+      this.session.activeTeamId = this.session.activeTeamIds[0] || null;
+    }
+    if (this.session.buzzerLockedByTeamId === teamId) {
+      this.session.buzzerLockedByTeamId = null;
+      this.session.buzzerLockEndsAt = null;
+    }
+    if (this.session.challenge && this.session.challenge.challengerId === teamId) {
+      this.session.challenge = null;
+    }
+    this.onChange();
   }
   sendToInstructions() {
     this.session.state = 'INSTRUCTIONS';
@@ -578,6 +600,8 @@ function setupSocket(io) {
   const game = new Game(() => broadcast());
   io.game = game;
   const socketTeam = new Map();
+  const pendingDisq = new Map();
+  const disqualifiedTeams = new Set();
 
   function broadcast() {
     io.to('admin').emit('state', snapshot(game, 'admin'));
@@ -623,7 +647,7 @@ function setupSocket(io) {
         return ack && ack({ ok: false, reason: 'This admin is already logged in' });
       }
       if (adminSlotsAvailable() <= 0) {
-        return ack && ack({ ok: false, reason: 'Both admin slots are in use. Try again later.' });
+        return ack && ack({ ok: false, reason: 'All admin slots are in use. Try again later.' });
       }
       const otp = generateOtp();
       otpStore.set(admin.mobile, { otp, expiresAt: Date.now() + OTP_TTL_MS });
@@ -652,7 +676,7 @@ function setupSocket(io) {
       }
       if (adminSlotsAvailable() <= 0) {
         otpStore.delete(admin.mobile);
-        return ack && ack({ ok: false, reason: 'Both admin slots are now in use' });
+        return ack && ack({ ok: false, reason: 'All admin slots are now in use' });
       }
       otpStore.delete(admin.mobile);
       const token = uuid();
@@ -691,6 +715,13 @@ function setupSocket(io) {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
+
+        // Cancel any pending disqualification (they reconnected in time)
+        if (pendingDisq.has(teamId)) {
+          clearTimeout(pendingDisq.get(teamId));
+          pendingDisq.delete(teamId);
+        }
+
         t.connected = true;
         socketTeam.set(socket.id, teamId);
         socket.data.teamId = teamId;
@@ -702,6 +733,14 @@ function setupSocket(io) {
     });
 
     socket.on('team:register', ({ teamName, students }, ack) => {
+      // Block if this team name was previously disqualified
+      const banned = game.teams.some(t =>
+        t.teamName.toLowerCase() === String(teamName || '').toLowerCase() &&
+        t.status === 'disqualified'
+      );
+      if (banned) {
+        return ack && ack({ ok: false, reason: 'This team was disqualified' });
+      }
       const result = game.registerTeam({ teamName, students });
       if (!result.ok) return ack && ack(result);
       socketTeam.set(socket.id, result.teamId);
@@ -729,6 +768,17 @@ function setupSocket(io) {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       ack && ack(game.challenge({ teamId: tid, questionId }));
+    });
+
+    /* ---- Immediate disqualification on visibility loss ---- */
+    socket.on('team:visibilityLost', () => {
+      const tid = socket.data.teamId;
+      if (!tid) return;
+      const t = game.team(tid);
+      if (!t || t.status !== 'active') return;
+      disqualifiedTeams.add(tid);
+      game.disqualifyTeam(tid);
+      broadcast();
     });
 
     /* ---- Admin actions (guard) ---- */
@@ -764,9 +814,25 @@ function setupSocket(io) {
       if (tid) {
         socketTeam.delete(socket.id);
         const t = game.team(tid);
-        if (t) t.connected = false;
+        if (t) {
+          t.connected = false;
+
+          // Disqualify only if the quiz is in active play
+          if (t.status === 'active' && !disqualifiedTeams.has(tid)) {
+            const handle = setTimeout(() => {
+              pendingDisq.delete(tid);
+              // Did they reconnect during the grace period?
+              const stillThere = [...socketTeam.values()].includes(tid);
+              if (stillThere) return;
+              disqualifiedTeams.add(tid);
+              game.disqualifyTeam(tid);
+            }, CFG.DISQUALIFY_GRACE_MS);
+            pendingDisq.set(tid, handle);
+          }
+        }
         broadcast();
       }
+
       const adminToken = socket.data.adminToken;
       if (adminToken && adminSessions.has(adminToken)) {
         const sess = adminSessions.get(adminToken);

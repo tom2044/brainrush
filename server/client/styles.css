@@ -785,3 +785,9 @@ a{color:var(--copper-light);text-decoration:none}
   .main{padding:14px}
   .btn{padding:12px 16px;font-size:13px}
 }
+
+.team-row.disqualified {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+  border-color: rgba(255, 71, 87, 0.5);
+}

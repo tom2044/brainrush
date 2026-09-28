@@ -8,6 +8,7 @@ const Team = {
   state: null,
   teamId: null,
   timerHandle: null,
+  _visBound: false,
 
   loadTeamId() {
     if (this.teamId) return this.teamId;
@@ -25,7 +26,27 @@ const Team = {
   setState(s) {
     this.state = s;
     this.loadTeamId();
+    this.bindVisibility();
     render();
+  },
+
+  bindVisibility() {
+    if (this._visBound) return;
+    this._visBound = true;
+
+    const report = () => {
+      if (!this.state) return;
+      const s = this.state.session;
+      const me = this.myTeam();
+      if (!me || me.status !== 'active') return;
+      if (s.state !== 'QUESTION_ACTIVE' && s.state !== 'ROUND_INTRO') return;
+      Socket.emit('team:visibilityLost', {});
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) report();
+    });
+    window.addEventListener('blur', () => report());
   },
 
   /* ---- Actions ---- */
@@ -70,12 +91,13 @@ const Team = {
   statusLabel(me) {
     if (!me) return '';
     switch (me.status) {
-      case 'registered': return 'PENDING';
-      case 'approved':   return 'APPROVED';
-      case 'active':     return 'IN PLAY';
-      case 'eliminated': return 'OUT R' + (me.eliminatedInRound || '?');
-      case 'winner':     return 'RANK #' + (me.finalRank || '?');
-      default:           return me.status;
+      case 'registered':   return 'PENDING';
+      case 'approved':     return 'APPROVED';
+      case 'active':       return 'IN PLAY';
+      case 'eliminated':   return 'OUT R' + (me.eliminatedInRound || '?');
+      case 'disqualified': return 'DISQUALIFIED';
+      case 'winner':       return 'RANK #' + (me.finalRank || '?');
+      default:             return me.status;
     }
   },
 
@@ -116,6 +138,7 @@ const Team = {
     const c = document.getElementById('tc');
     if (!c) return;
 
+    if (me.status === 'disqualified')   return this.disqualified(c, me);
     if (me.status === 'registered')     return this.wait(c, me, 'Waiting for admin approval…');
     if (s.state === 'LOBBY')            return this.wait(c, me, 'Approved! Waiting for the quiz…');
     if (s.state === 'INSTRUCTIONS')     return this.instructions(c, me, s);
@@ -124,6 +147,21 @@ const Team = {
     if (s.state === 'QUESTION_REVEAL')  return this.reveal(c, me, s);
     if (s.state === 'ROUND_END')        return this.roundEnd(c, me, s);
     if (s.state === 'FINISHED')         return this.finished(c, me);
+  },
+
+  disqualified(c, me) {
+    c.innerHTML = `
+      <div class="wait-screen">
+        <div class="wait-icon" style="filter:drop-shadow(0 8px 30px rgba(255,71,87,.7))">🚫</div>
+        <h2 style="background:linear-gradient(180deg,#fff,#ff4757);-webkit-background-clip:text;background-clip:text;color:transparent">
+          DISQUALIFIED
+        </h2>
+        <p style="color:var(--danger-red);font-weight:600;font-size:16px">
+          You left the quiz screen during an active round.
+        </p>
+        <p class="small muted mt">Team: <b>${esc(me.teamName)}</b></p>
+        <p class="small muted">This decision cannot be reversed.</p>
+      </div>`;
   },
 
   renderLogin(root) {
@@ -178,7 +216,7 @@ const Team = {
         <li>10 teams start. Bottom teams are eliminated after each round.</li>
         <li>Round 3: Challenge button lets you steal a question for bonus points.</li>
         <li>Round 4: First to press the buzzer locks the question.</li>
-        <li>Do not refresh or close this tab during a round.</li>
+        <li>Do not refresh, minimize, or switch apps during a round — you will be disqualified.</li>
       </ul>
       <div class="instr-footer">
         <label class="agree-label">

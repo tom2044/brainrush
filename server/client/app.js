@@ -5,6 +5,7 @@ const TEAM_KEY = 'brainrush:teamid';
 
 const App = {
   role: null,
+  screen: 'welcome',   // 'welcome' | 'roles'
   adminSlots: { total: 2, active: 0, available: 2 },
 
   boot() {
@@ -17,13 +18,19 @@ const App = {
       this.reattach();
     });
     Socket.on('disconnect', () => this.updateConnBadge(false));
+
     Socket.on('state', (s) => {
       if (this.role === 'admin') Admin.setState(s);
       else if (this.role === 'team') Team.setState(s);
     });
+
     Socket.on('admin:slots', (data) => {
       App.adminSlots = data;
-      if (!App.role) render();
+      // Live-update whichever screen is showing
+      if (!App.role && App.screen === 'roles') {
+        const root = document.getElementById('root');
+        if (root) renderRoles(root);
+      }
     });
 
     this.updateConnBadge(false);
@@ -52,7 +59,6 @@ const App = {
         catch (e) { return null; }
       })();
       if (savedToken) Socket.emit('role:admin', { token: savedToken });
-      // else: Admin.render will show the login screen
     } else if (r === 'team') {
       let teamId = null;
       try { teamId = sessionStorage.getItem(TEAM_KEY); } catch (e) {}
@@ -69,6 +75,7 @@ const App = {
       sessionStorage.removeItem('brainrush:adminName');
       sessionStorage.removeItem('brainrush:adminMobile');
     } catch (e) {}
+    this.screen = 'welcome';
     location.reload();
   },
 
@@ -89,7 +96,10 @@ function render() {
   const root = document.getElementById('root');
   if (!root) return;
   try {
-    if (!App.role) return renderWelcome(root);
+    if (!App.role) {
+      if (App.screen === 'roles') return renderRoles(root);
+      return renderWelcome(root);
+    }
     if (App.role === 'admin') return Admin.render(root);
     return Team.render(root);
   } catch (e) {
@@ -98,7 +108,11 @@ function render() {
   }
 }
 
+/* ============================================================
+   WELCOME
+   ============================================================ */
 function renderWelcome(root) {
+  App.screen = 'welcome';
   root.innerHTML = `
     <div class="landing">
       <div class="induction-tag">Student Induction Programme · 2026</div>
@@ -139,30 +153,34 @@ function renderWelcome(root) {
   document.getElementById('enterBtn').addEventListener('click', () => renderRoles(root));
 }
 
+/* ============================================================
+   ROLE SELECTION
+   ============================================================ */
 function renderRoles(root) {
+  App.screen = 'roles';
   const slots = App.adminSlots;
-  const adminAvailable = slots.available > 0;
+  const showAdmin = slots.available > 0;
+
+  // If only one card will show, center it by using a single-column grid
+  const gridStyle = showAdmin ? '' : 'grid-template-columns: minmax(240px, 340px);';
 
   root.innerHTML = `
     <div class="role-screen">
       <div class="role-header">
         <h2>CHOOSE YOUR ROLE</h2>
-        <p>Select how you want to enter the arena</p>
+        <p>${showAdmin
+          ? 'Select how you want to enter the arena'
+          : 'Admin slots are full — Team entry only'}</p>
       </div>
-      <div class="role-grid">
-        ${adminAvailable ? `
-        <div class="role-card" id="rcAdmin">
-          <div class="rc-ico">🛡️</div>
-          <h3>Admin</h3>
-          <p>Login with mobile OTP. ${slots.available} slot${slots.available === 1 ? '' : 's'} available.</p>
-        </div>
-        ` : `
-        <div class="role-card" style="opacity:.45;cursor:not-allowed;filter:grayscale(.6)">
-          <div class="rc-ico">🛡️</div>
-          <h3>Admin — FULL</h3>
-          <p>Both admin slots are in use. Team entry only.</p>
-        </div>
-        `}
+      <div class="role-grid" style="${gridStyle}">
+        ${showAdmin ? `
+          <div class="role-card" id="rcAdmin">
+            <div class="rc-ico">🛡️</div>
+            <h3>Admin</h3>
+            <p>Login with mobile OTP. ${slots.available} slot${slots.available === 1 ? '' : 's'} available.</p>
+          </div>
+        ` : ''}
+
         <div class="role-card" id="rcTeam">
           <div class="rc-ico">🎓</div>
           <h3>Team</h3>
@@ -178,9 +196,15 @@ function renderRoles(root) {
     else toast('⚠ Both admin slots are full');
   };
   document.getElementById('rcTeam').onclick = () => App.setRole('team');
-  document.getElementById('backBtn').onclick = () => renderWelcome(root);
+  document.getElementById('backBtn').onclick = () => {
+    App.screen = 'welcome';
+    renderWelcome(root);
+  };
 }
 
+/* ============================================================
+   BOOT
+   ============================================================ */
 try {
   App.boot();
 } catch (e) {

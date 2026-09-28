@@ -1,25 +1,72 @@
 'use strict';
 
-/* ============================================================
-   BRAINRUSH — Admin View
-   ============================================================ */
-
 const Admin = {
   tab: 'control',
   state: null,
+  _step: 'mobile',
+  _mobile: '',
+  _devOtp: null,
+
+  /* ---- Auth helpers ---- */
+  get token() {
+    try { return sessionStorage.getItem('brainrush:adminToken'); } catch (e) { return null; }
+  },
+  get adminName() {
+    try { return sessionStorage.getItem('brainrush:adminName') || ''; } catch (e) { return ''; }
+  },
+  get mobile() {
+    try { return sessionStorage.getItem('brainrush:adminMobile') || ''; } catch (e) { return ''; }
+  },
+  setAuth(token, name, mobile, adminId) {
+    try {
+      sessionStorage.setItem('brainrush:adminToken', token);
+      sessionStorage.setItem('brainrush:adminName', name || '');
+      sessionStorage.setItem('brainrush:adminMobile', mobile || '');
+      sessionStorage.setItem('brainrush:adminId', adminId || '');
+    } catch (e) {}
+  },
+  clearAuth() {
+    try {
+      sessionStorage.removeItem('brainrush:adminToken');
+      sessionStorage.removeItem('brainrush:adminName');
+      sessionStorage.removeItem('brainrush:adminMobile');
+      sessionStorage.removeItem('brainrush:adminId');
+    } catch (e) {}
+  },
 
   setState(s) { this.state = s; render(); },
 
+  /* ---- OTP flow ---- */
+  requestOtp(mobile, onSuccess) {
+    Socket.emit('admin:requestOtp', { mobile }, (r) => {
+      if (!r || !r.ok) { toast('⚠ ' + ((r && r.reason) || 'Failed')); return; }
+      toast('✓ OTP sent');
+      onSuccess(r);
+    });
+  },
+  verifyOtp(mobile, otp, onSuccess) {
+    Socket.emit('admin:verifyOtp', { mobile, otp }, (r) => {
+      if (!r || !r.ok) { toast('⚠ ' + ((r && r.reason) || 'Failed')); return; }
+      this.setAuth(r.token, r.name, mobile, r.adminId);
+      toast('✓ Logged in as ' + r.name);
+      onSuccess(r);
+    });
+  },
+  logout() {
+    this.clearAuth();
+    App.exitRole();
+  },
+
   /* ---- Actions ---- */
   approve(teamId, yes)    { Socket.emit('admin:approveTeam', { teamId, yes }); },
-  deleteTeam(teamId) {
-  if (!confirm('Delete this team permanently? This cannot be undone.')) return;
-  Socket.emit('admin:deleteTeam', { teamId }, (r) => {
-    if (r && !r.ok) toast('⚠ ' + (r.reason || 'Delete failed'));
-    else toast('✓ Team removed');
-  });
-},
   approveAll()            { Socket.emit('admin:approveAll'); },
+  deleteTeam(teamId) {
+    if (!confirm('Delete this team permanently? This cannot be undone.')) return;
+    Socket.emit('admin:deleteTeam', { teamId }, (r) => {
+      if (r && !r.ok) toast('⚠ ' + (r.reason || 'Delete failed'));
+      else toast('✓ Team removed');
+    });
+  },
   sendToInstructions()    { Socket.emit('admin:sendToInstructions'); },
   closeInstructions()     { Socket.emit('admin:closeInstructions'); },
   startRound(n)           { Socket.emit('admin:startRound', { round: n }, (r) => {
@@ -36,7 +83,6 @@ const Admin = {
   deleteQuestion(id)      { Socket.emit('admin:question:delete', { id }); },
   moveQuestion(id, dir)   { Socket.emit('admin:question:move', { id, direction: dir }); },
 
-  /* ---- Helpers ---- */
   roundQuestions(r) {
     return this.state.questions.filter(q => q.roundNumber === r && q.isActive)
       .sort((a, b) => a.order - b.order);
@@ -56,9 +102,13 @@ const Admin = {
                    || (a.latency || 0) - (b.latency || 0));
   },
 
-  /* ---- Render ---- */
+  /* ---- Render dispatcher ---- */
   render(root) {
-    if (!this.state) { root.innerHTML = '<div class="wait-screen"><p>Loading…</p></div>'; return; }
+    if (!this.token) return this.renderLogin(root);
+    if (!this.state) {
+      root.innerHTML = '<div class="wait-screen"><p>Loading admin panel…</p></div>';
+      return;
+    }
     const db = this.state;
     const s = db.session;
     const labels = {
@@ -70,11 +120,11 @@ const Admin = {
     root.innerHTML = `
       <div class="app">
         <div class="topbar">
-          <div class="brand"><span class="dot"></span>BRAINRUSH <span class="badge info">ADMIN</span></div>
+          <div class="brand"><span class="dot"></span>BRAINRUSH <span class="badge info">${esc(this.adminName || 'ADMIN')}</span></div>
           <div class="flex">
             <span class="badge ${s.state === 'QUESTION_ACTIVE' ? 'live' : ''}">${labels[s.state] || s.state}</span>
             <span class="badge">R${s.round || '-'} · Q${s.qIndex + 1}</span>
-            <button class="btn sm ghost" id="exit">EXIT</button>
+            <button class="btn sm ghost" id="exit">LOGOUT</button>
           </div>
         </div>
         <div class="main">
@@ -88,7 +138,9 @@ const Admin = {
         </div>
       </div>`;
 
-    document.getElementById('exit').onclick = () => App.exitRole();
+    document.getElementById('exit').onclick = () => {
+      if (confirm('Log out of admin panel?')) Admin.logout();
+    };
     document.querySelectorAll('.tab').forEach(el => el.onclick = () => {
       this.tab = el.dataset.tab; render();
     });
@@ -101,6 +153,97 @@ const Admin = {
     else if (this.tab === 'board') this.renderBoard(c);
   },
 
+  /* ---- Login screens ---- */
+  renderLogin(root) {
+    if (this._step === 'otp') return this.renderOtp(root);
+    return this.renderMobile(root);
+  },
+
+  renderMobile(root) {
+    root.innerHTML = `
+      <div class="reg-screen">
+        <div class="reg-card">
+          <h2>🛡️ ADMIN LOGIN</h2>
+          <p class="subtitle">Enter your registered mobile number</p>
+          <div class="field">
+            <label>MOBILE NUMBER</label>
+            <input id="adminMobile" type="tel" inputmode="numeric"
+                   placeholder="10-digit mobile" maxlength="10" autocomplete="off">
+          </div>
+          <button class="btn primary block mt" id="sendOtp">SEND OTP →</button>
+        </div>
+        <button class="back-btn" id="backBtn">← BACK TO ROLES</button>
+      </div>`;
+
+    document.getElementById('sendOtp').onclick = () => {
+      const mobile = document.getElementById('adminMobile').value.trim();
+      if (!/^\d{10}$/.test(mobile)) return toast('⚠ Enter 10-digit mobile');
+      const btn = document.getElementById('sendOtp');
+      btn.disabled = true;
+      btn.textContent = 'SENDING…';
+      Admin.requestOtp(mobile, (r) => {
+        Admin._mobile = mobile;
+        Admin._step = 'otp';
+        Admin._devOtp = r.devOtp || null;
+        Admin.render(root);
+      });
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'SEND OTP →'; }, 3000);
+    };
+    document.getElementById('backBtn').onclick = () => {
+      App.role = null;
+      try { sessionStorage.removeItem('brainrush:role'); } catch (e) {}
+      render();
+    };
+
+    setTimeout(() => {
+      const el = document.getElementById('adminMobile');
+      if (el) el.focus();
+    }, 100);
+  },
+
+  renderOtp(root) {
+    root.innerHTML = `
+      <div class="reg-screen">
+        <div class="reg-card">
+          <h2>🔐 VERIFY OTP</h2>
+          <p class="subtitle">Enter the 6-digit code sent to ${esc(Admin._mobile || '')}</p>
+          <div class="field">
+            <label>ONE-TIME PASSWORD</label>
+            <input id="adminOtp" type="tel" inputmode="numeric"
+                   placeholder="6-digit OTP" maxlength="6" autocomplete="off"
+                   style="font-family:'JetBrains Mono',monospace;font-size:24px;text-align:center;letter-spacing:8px">
+          </div>
+          <button class="btn primary block mt" id="verifyOtp">VERIFY & LOGIN →</button>
+          <button class="btn ghost block mt" id="resendOtp" style="font-size:12px">← Resend / Change number</button>
+          ${Admin._devOtp ? `<p class="small muted center mt">Dev OTP: <b style="color:var(--copper-light)">${esc(Admin._devOtp)}</b></p>` : ''}
+        </div>
+      </div>`;
+
+    document.getElementById('verifyOtp').onclick = () => {
+      const otp = document.getElementById('adminOtp').value.trim();
+      if (!/^\d{6}$/.test(otp)) return toast('⚠ Enter 6-digit OTP');
+      const btn = document.getElementById('verifyOtp');
+      btn.disabled = true;
+      btn.textContent = 'VERIFYING…';
+      Admin.verifyOtp(Admin._mobile, otp, () => {
+        Admin._step = null;
+        Admin._devOtp = null;
+        render();
+      });
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'VERIFY & LOGIN →'; }, 3000);
+    };
+    document.getElementById('resendOtp').onclick = () => {
+      Admin._step = 'mobile';
+      Admin.render(root);
+    };
+
+    setTimeout(() => {
+      const el = document.getElementById('adminOtp');
+      if (el) el.focus();
+    }, 100);
+  },
+
+  /* ---- Control tab ---- */
   renderControl(c) {
     const db = this.state;
     const s = db.session;
@@ -145,7 +288,6 @@ const Admin = {
     }
 
     const q = this.currentQuestion();
-
     c.innerHTML = `
       <div class="grid sidebar">
         <div>
@@ -185,11 +327,9 @@ const Admin = {
     bind('reset',       () => this.resetSession());
     bind('backLobby',   () => this.backLobby());
     bind('clearAll',    () => this.clearAll());
-
     document.querySelectorAll('#ac [data-r]').forEach(el => {
       el.onclick = () => this.startRound(+el.dataset.r);
     });
-
     this.renderLeaderboard(document.getElementById('alb'), false);
   },
 
@@ -197,10 +337,6 @@ const Admin = {
     let body = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">${esc(q.text)}</div>`;
     if (q.type === 'mcq') {
       body += `<div class="small muted mb">Correct: <b style="color:var(--acid-green)">${esc(q.options[q.correctAnswer])}</b></div>`;
-      body += '<ol style="margin-left:18px;color:var(--mut);font-size:13px">' +
-        q.options.map((o, i) =>
-          `<li style="${i === q.correctAnswer ? 'color:var(--acid-green);font-weight:700' : ''}">${esc(o)}</li>`
-        ).join('') + '</ol>';
     } else {
       body += `<div class="small muted">Target: <b style="color:var(--acid-green)">${esc(q.correctAnswer)} ${esc(q.unit || '')}</b></div>`;
     }
@@ -248,7 +384,7 @@ const Admin = {
           <div class="row-actions">
             ${t.status === 'registered' ? `<button class="btn sm good" data-ap="${t.id}">APPROVE</button>` : ''}
             ${(t.status === 'approved' || t.status === 'active') ? `<button class="btn sm ghost" data-rv="${t.id}">REVOKE</button>` : ''}
-<button class="btn sm bad" data-del="${t.id}">DELETE</button>
+            <button class="btn sm bad" data-del="${t.id}">DELETE</button>
           </div>
         </div>`;
     };
@@ -274,8 +410,8 @@ const Admin = {
       el.onclick = () => this.approve(el.dataset.ap, true));
     document.querySelectorAll('[data-rv]').forEach(el =>
       el.onclick = () => this.approve(el.dataset.rv, false));
-      document.querySelectorAll('[data-del]').forEach(el =>
-  el.onclick = () => this.deleteTeam(el.dataset.del));
+    document.querySelectorAll('[data-del]').forEach(el =>
+      el.onclick = () => this.deleteTeam(el.dataset.del));
     const apAll = document.getElementById('apAll');
     if (apAll) apAll.onclick = () => this.approveAll();
   },

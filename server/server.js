@@ -16,26 +16,58 @@ const CFG = {
   MIN_TEAMS_TO_START: 2,
   R1_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
   R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
-  R3_CORRECT: 10,
-  R3_STEAL: 15,
-  R3_FAIL: -5,
-  R4_CORRECT: 20,
-  R4_WRONG: -10,
-  REVEAL_MS: 4000,
-  BUZZ_WINDOW_MS: 8000,
-  CHALLENGE_MS: 10000,
-  INSTR_SEC: 300,
-  ROUND_INTRO_MS: 3000,
-  TICK_MS: 100,
+  R3_CORRECT: 10, R3_STEAL: 15, R3_FAIL: -5,
+  R4_CORRECT: 20, R4_WRONG: -10,
+  REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
+  INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
   ROUND_CUTS: { 1: 2, 2: 2, 3: 4 }
 };
+
+/* ============================================================
+   ADMIN AUTH
+   ============================================================ */
+const ADMINS = [
+  { id: 'admin1', name: 'Tamal', mobile: '9695848092' },
+  { id: 'admin2', name: 'Joy',   mobile: '8293309467' }
+];
+const MAX_ADMIN_SLOTS = 2;
+const OTP_TTL_MS = 5 * 60 * 1000;
+const SESSION_GRACE_MS = 30 * 1000;
+
+const otpStore = new Map();       // mobile -> { otp, expiresAt }
+const adminSessions = new Map();  // token -> { adminId, socketId, lastSeen }
+const adminByMobile = new Map();  // mobile -> token
+
+function findAdminByMobile(mobile) {
+  return ADMINS.find(a => a.mobile === mobile) || null;
+}
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+function activeAdminCount() {
+  return adminSessions.size;
+}
+function adminSlotsAvailable() {
+  return Math.max(0, MAX_ADMIN_SLOTS - activeAdminCount());
+}
+function pruneStaleSessions() {
+  const now = Date.now();
+  for (const [token, sess] of adminSessions.entries()) {
+    if (!sess.socketId && (now - sess.lastSeen) > SESSION_GRACE_MS) {
+      adminSessions.delete(token);
+      for (const [m, t] of adminByMobile.entries()) {
+        if (t === token) adminByMobile.delete(m);
+      }
+    }
+  }
+}
+setInterval(pruneStaleSessions, 10000);
 
 /* ============================================================
    QUESTIONS
    ============================================================ */
 function seedQuestions() {
   const out = [];
-
   const R1 = [
     ['Height of the Statue of Unity (m)', 182, 'm'],
     ['Year the first iPhone was released', 2007, ''],
@@ -48,7 +80,6 @@ function seedQuestions() {
     id: 'r1q' + (i + 1), roundNumber: 1, order: i + 1, type: 'closest_guess',
     text: t, correctAnswer: a, unit: u, points: 10, timeLimitSec: 45, isActive: true
   }));
-
   const R2 = [
     ['Capital of Australia?', ['Sydney', 'Canberra', 'Melbourne', 'Perth'], 1],
     ['Which planet is the Red Planet?', ['Venus', 'Mars', 'Jupiter', 'Mercury'], 1],
@@ -65,7 +96,6 @@ function seedQuestions() {
     id: 'r2q' + (i + 1), roundNumber: 2, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 20, isActive: true
   }));
-
   const R3 = [
     ['Largest planet?', ['Saturn', 'Jupiter', 'Neptune', 'Earth'], 1],
     ['Longest river in the world?', ['Amazon', 'Yangtze', 'Nile', 'Mississippi'], 2],
@@ -90,7 +120,6 @@ function seedQuestions() {
     id: 'r3q' + (i + 1), roundNumber: 3, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
   }));
-
   const R4 = [
     ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
     ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
@@ -107,7 +136,6 @@ function seedQuestions() {
     id: 'r4q' + (i + 1), roundNumber: 4, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 20, timeLimitSec: 15, isActive: true
   }));
-
   return out;
 }
 
@@ -122,7 +150,6 @@ class Game {
     this.teams = [];
     this.answers = [];
   }
-
   blankSession() {
     return {
       state: 'LOBBY', round: 0, qIndex: 0, currentQuestionId: null,
@@ -132,7 +159,6 @@ class Game {
       challenge: null, lastReveal: null, instructionsEndsAt: null
     };
   }
-
   roundQuestions(r) {
     return this.questions.filter(q => q.roundNumber === r && q.isActive)
       .sort((a, b) => a.order - b.order);
@@ -157,7 +183,6 @@ class Game {
     return this.session.activeTeamIds.every(tid =>
       this.answers.some(a => a.questionId === q.id && a.teamId === tid));
   }
-
   registerTeam({ teamName, students }) {
     if (!teamName || !Array.isArray(students) || students.length !== 2)
       return { ok: false, reason: 'Invalid team data' };
@@ -175,12 +200,10 @@ class Game {
     this.onChange();
     return { ok: true, teamId: team.id };
   }
-
   ackInstructions(teamId) {
     const t = this.team(teamId);
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
-
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
     if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
@@ -196,7 +219,6 @@ class Game {
     }
     if (s.round === 4 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
-
     const receivedAt = Date.now();
     const rec = {
       id: uuid(), questionId, teamId, roundNumber: s.round,
@@ -209,14 +231,12 @@ class Game {
     this.answers.push(rec);
     const t = this.team(teamId);
     if (t) t.latency += rec.latencyMs;
-
     if (s.round === 3) this.evalR3Single(rec, q);
     else if (s.round === 4) this.evalR4Single(rec, q);
     else if (this.allAnswered(q)) this.finishQuestion();
     else this.onChange();
     return { ok: true };
   }
-
   buzz({ teamId, questionId }) {
     const s = this.session;
     if (s.round !== 4 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
@@ -232,7 +252,6 @@ class Game {
     this.onChange();
     return { ok: true };
   }
-
   challenge({ teamId, questionId }) {
     const s = this.session;
     if (s.round !== 3 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
@@ -246,40 +265,35 @@ class Game {
     this.onChange();
     return { ok: true };
   }
-
   approveTeam(teamId, yes) {
     const t = this.team(teamId);
     if (!t) return;
     t.status = yes ? 'approved' : 'registered';
     this.onChange();
   }
-  deleteTeam(teamId) {
-  const idx = this.teams.findIndex(t => t.id === teamId);
-  if (idx === -1) return { ok: false, reason: 'Team not found' };
-  const teamName = this.teams[idx].teamName;
-  this.teams.splice(idx, 1);
-  // Clean up any answers from this team
-  this.answers = this.answers.filter(a => a.teamId !== teamId);
-  // Remove from active teams if in play
-  this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
-  if (this.session.activeTeamId === teamId) {
-    this.session.activeTeamId = this.session.activeTeamIds[0] || null;
-  }
-  // Clear buzzer lock if held by this team
-  if (this.session.buzzerLockedByTeamId === teamId) {
-    this.session.buzzerLockedByTeamId = null;
-    this.session.buzzerLockEndsAt = null;
-  }
-  // Clear challenge if held by this team
-  if (this.session.challenge && this.session.challenge.challengerId === teamId) {
-    this.session.challenge = null;
-  }
-  this.onChange();
-  return { ok: true, teamName };
-}
   approveAll() {
     this.teams.forEach(t => { if (t.status === 'registered') t.status = 'approved'; });
     this.onChange();
+  }
+  deleteTeam(teamId) {
+    const idx = this.teams.findIndex(t => t.id === teamId);
+    if (idx === -1) return { ok: false, reason: 'Team not found' };
+    const teamName = this.teams[idx].teamName;
+    this.teams.splice(idx, 1);
+    this.answers = this.answers.filter(a => a.teamId !== teamId);
+    this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
+    if (this.session.activeTeamId === teamId) {
+      this.session.activeTeamId = this.session.activeTeamIds[0] || null;
+    }
+    if (this.session.buzzerLockedByTeamId === teamId) {
+      this.session.buzzerLockedByTeamId = null;
+      this.session.buzzerLockEndsAt = null;
+    }
+    if (this.session.challenge && this.session.challenge.challengerId === teamId) {
+      this.session.challenge = null;
+    }
+    this.onChange();
+    return { ok: true, teamName };
   }
   sendToInstructions() {
     this.session.state = 'INSTRUCTIONS';
@@ -287,7 +301,6 @@ class Game {
     this.onChange();
   }
   closeInstructions() { this.session.state = 'LOBBY'; this.onChange(); }
-
   startRound(n) {
     const s = this.session;
     const approved = this.teams.filter(t => t.status === 'approved' || t.status === 'active');
@@ -306,7 +319,6 @@ class Game {
     }, CFG.ROUND_INTRO_MS);
     return { ok: true };
   }
-
   showQuestion() {
     const s = this.session;
     const q = this.currentQuestion();
@@ -319,7 +331,6 @@ class Game {
     s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null;
     this.onChange();
   }
-
   nextQuestion() {
     const s = this.session;
     const qs = this.roundQuestions(s.round);
@@ -331,7 +342,6 @@ class Game {
     }
     this.showQuestion();
   }
-
   finishQuestion() {
     const s = this.session;
     if (s.round === 1) this.evalR1();
@@ -341,7 +351,6 @@ class Game {
     s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null; s.challenge = null;
     this.onChange();
   }
-
   endRound() {
     const s = this.session;
     s.state = 'ROUND_END';
@@ -361,14 +370,12 @@ class Game {
     }
     this.onChange();
   }
-
   endSession() {
     const lb = this.leaderboard(this.teams.filter(t => t.status !== 'registered').map(t => t.id));
     lb.forEach((t, i) => { t.status = 'winner'; t.finalRank = i + 1; });
     this.session.state = 'FINISHED';
     this.onChange();
   }
-
   resetSession() {
     this.session = this.blankSession();
     this.answers = [];
@@ -379,14 +386,12 @@ class Game {
     });
     this.onChange();
   }
-
   clearAll() {
     this.session = this.blankSession();
     this.teams = []; this.answers = [];
     this.questions = seedQuestions();
     this.onChange();
   }
-
   evalR1() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -406,7 +411,6 @@ class Game {
       note: 'CLOSEST GUESS'
     };
   }
-
   evalR2() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -423,7 +427,6 @@ class Game {
       note: 'FASTEST FINGER'
     };
   }
-
   evalR3Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
@@ -446,7 +449,6 @@ class Game {
     }
     this.finishQuestion();
   }
-
   evalR4Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
@@ -459,7 +461,6 @@ class Game {
     };
     this.finishQuestion();
   }
-
   addQuestion(o) {
     const rq = this.roundQuestions(o.roundNumber);
     const order = rq.length ? Math.max(...rq.map(q => q.order)) + 1 : 1;
@@ -475,14 +476,12 @@ class Game {
     this.onChange();
     return q;
   }
-
   editQuestion(id, patch) {
     const q = this.questions.find(x => x.id === id);
     if (!q) return;
     Object.assign(q, patch, { editedAt: Date.now() });
     this.onChange();
   }
-
   deleteQuestion(id) {
     const idx = this.questions.findIndex(q => q.id === id);
     if (idx === -1) return;
@@ -491,7 +490,6 @@ class Game {
     this.roundQuestions(r).forEach((q, i) => { q.order = i + 1; });
     this.onChange();
   }
-
   moveQuestion(id, direction) {
     const q = this.questions.find(x => x.id === id);
     if (!q) return;
@@ -504,7 +502,6 @@ class Game {
     rq[swap].order = tmp;
     this.onChange();
   }
-
   tick() {
     const s = this.session;
     const n = Date.now();
@@ -547,7 +544,7 @@ class Game {
 }
 
 /* ============================================================
-   SOCKET SANITIZATION
+   SANITIZE
    ============================================================ */
 function sanitizeForTeam(db) {
   const out = JSON.parse(JSON.stringify(db));
@@ -564,7 +561,6 @@ function sanitizeForTeam(db) {
   }
   return out;
 }
-
 function snapshot(game, role) {
   const db = {
     session: game.session, questions: game.questions,
@@ -575,7 +571,7 @@ function snapshot(game, role) {
 }
 
 /* ============================================================
-   SOCKET.IO
+   SOCKET
    ============================================================ */
 function setupSocket(io) {
   const game = new Game(() => broadcast());
@@ -589,16 +585,107 @@ function setupSocket(io) {
       if (s) s.emit('state', snapshot(game, 'team'));
     }
   }
+  function broadcastSlots() {
+    io.emit('admin:slots', {
+      total: MAX_ADMIN_SLOTS,
+      active: activeAdminCount(),
+      available: adminSlotsAvailable()
+    });
+  }
 
   setInterval(() => { if (game.tick()) broadcast(); }, CFG.TICK_MS);
 
   io.on('connection', (socket) => {
-    socket.on('role:admin', () => {
-      socket.join('admin');
-      socket.data.role = 'admin';
-      socket.emit('state', snapshot(game, 'admin'));
+    socket.emit('admin:slots', {
+      total: MAX_ADMIN_SLOTS,
+      active: activeAdminCount(),
+      available: adminSlotsAvailable()
     });
 
+    /* ---- Admin slot info ---- */
+    socket.on('admin:slots:get', () => {
+      socket.emit('admin:slots', {
+        total: MAX_ADMIN_SLOTS,
+        active: activeAdminCount(),
+        available: adminSlotsAvailable()
+      });
+    });
+
+    /* ---- Admin OTP: request ---- */
+    socket.on('admin:requestOtp', ({ mobile }, ack) => {
+      const admin = findAdminByMobile(String(mobile || '').trim());
+      if (!admin) {
+        return ack && ack({ ok: false, reason: 'Mobile number not registered as admin' });
+      }
+      const existingToken = adminByMobile.get(admin.mobile);
+      if (existingToken && adminSessions.has(existingToken)) {
+        return ack && ack({ ok: false, reason: 'This admin is already logged in' });
+      }
+      if (adminSlotsAvailable() <= 0) {
+        return ack && ack({ ok: false, reason: 'Both admin slots are in use. Try again later.' });
+      }
+      const otp = generateOtp();
+      otpStore.set(admin.mobile, { otp, expiresAt: Date.now() + OTP_TTL_MS });
+      console.log('\n╔══════════════════════════════════════╗');
+      console.log('║  🔐 BRAINRUSH ADMIN OTP              ║');
+      console.log('╠══════════════════════════════════════╣');
+      console.log('║  ' + admin.name.padEnd(34) + '║');
+      console.log('║  ' + admin.mobile.padEnd(34) + '║');
+      console.log('║  OTP: ' + otp.padEnd(29) + '║');
+      console.log('╚══════════════════════════════════════╝\n');
+      ack && ack({ ok: true, message: 'OTP sent', devOtp: otp });
+    });
+
+    /* ---- Admin OTP: verify ---- */
+    socket.on('admin:verifyOtp', ({ mobile, otp }, ack) => {
+      const admin = findAdminByMobile(String(mobile || '').trim());
+      if (!admin) return ack && ack({ ok: false, reason: 'Invalid mobile' });
+      const entry = otpStore.get(admin.mobile);
+      if (!entry) return ack && ack({ ok: false, reason: 'No OTP requested' });
+      if (Date.now() > entry.expiresAt) {
+        otpStore.delete(admin.mobile);
+        return ack && ack({ ok: false, reason: 'OTP expired' });
+      }
+      if (entry.otp !== String(otp || '').trim()) {
+        return ack && ack({ ok: false, reason: 'Wrong OTP' });
+      }
+      if (adminSlotsAvailable() <= 0) {
+        otpStore.delete(admin.mobile);
+        return ack && ack({ ok: false, reason: 'Both admin slots are now in use' });
+      }
+      otpStore.delete(admin.mobile);
+      const token = uuid();
+      adminSessions.set(token, {
+        adminId: admin.id, socketId: socket.id, lastSeen: Date.now()
+      });
+      adminByMobile.set(admin.mobile, token);
+      socket.join('admin');
+      socket.data.role = 'admin';
+      socket.data.adminId = admin.id;
+      socket.data.adminToken = token;
+      broadcastSlots();
+      socket.emit('state', snapshot(game, 'admin'));
+      ack && ack({ ok: true, token, adminId: admin.id, name: admin.name });
+    });
+
+    /* ---- Admin reconnect with token ---- */
+    socket.on('role:admin', ({ token } = {}) => {
+      const sess = token ? adminSessions.get(token) : null;
+      if (sess) {
+        sess.socketId = socket.id;
+        sess.lastSeen = Date.now();
+        socket.join('admin');
+        socket.data.role = 'admin';
+        socket.data.adminId = sess.adminId;
+        socket.data.adminToken = token;
+        socket.emit('state', snapshot(game, 'admin'));
+        broadcastSlots();
+        return;
+      }
+      socket.emit('state', snapshot(game, 'team'));
+    });
+
+    /* ---- Team roles ---- */
     socket.on('role:team', ({ teamId } = {}) => {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
@@ -627,36 +714,33 @@ function setupSocket(io) {
       const tid = socket.data.teamId;
       if (tid) game.ackInstructions(tid);
     });
-
     socket.on('team:answer', ({ questionId, answer }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       ack && ack(game.submitAnswer({ teamId: tid, questionId, answer }));
     });
-
     socket.on('team:buzz', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       ack && ack(game.buzz({ teamId: tid, questionId }));
     });
-
     socket.on('team:challenge', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       ack && ack(game.challenge({ teamId: tid, questionId }));
     });
 
+    /* ---- Admin actions (guard) ---- */
     const adminGuard = (fn) => (...args) => {
       if (socket.data.role !== 'admin') return;
       fn(...args);
     };
-
     socket.on('admin:approveTeam',        adminGuard(({ teamId, yes }) => game.approveTeam(teamId, yes)));
     socket.on('admin:approveAll',         adminGuard(() => game.approveAll()));
     socket.on('admin:deleteTeam',         adminGuard(({ teamId }, ack) => {
-  const r = game.deleteTeam(teamId);
-  ack && ack(r);
-}));
+      const r = game.deleteTeam(teamId);
+      ack && ack(r);
+    }));
     socket.on('admin:sendToInstructions', adminGuard(() => game.sendToInstructions()));
     socket.on('admin:closeInstructions',  adminGuard(() => game.closeInstructions()));
     socket.on('admin:startRound',         adminGuard(({ round }, ack) => {
@@ -673,6 +757,7 @@ function setupSocket(io) {
     socket.on('admin:question:delete', adminGuard(({ id }) => game.deleteQuestion(id)));
     socket.on('admin:question:move',   adminGuard(({ id, direction }) => game.moveQuestion(id, direction)));
 
+    /* ---- Disconnect ---- */
     socket.on('disconnect', () => {
       const tid = socketTeam.get(socket.id);
       if (tid) {
@@ -680,6 +765,13 @@ function setupSocket(io) {
         const t = game.team(tid);
         if (t) t.connected = false;
         broadcast();
+      }
+      const adminToken = socket.data.adminToken;
+      if (adminToken && adminSessions.has(adminToken)) {
+        const sess = adminSessions.get(adminToken);
+        sess.socketId = null;
+        sess.lastSeen = Date.now();
+        broadcastSlots();
       }
     });
   });
@@ -692,10 +784,8 @@ function setupSocket(io) {
    ============================================================ */
 const app = express();
 app.use(cors());
-
 const clientDir = path.join(__dirname, 'client');
 app.use(express.static(clientDir));
-
 app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 app.get('*', (req, res) => res.sendFile(path.join(clientDir, 'index.html')));
 
@@ -706,7 +796,7 @@ const io = new Server(server, {
 });
 
 setupSocket(io);
-
 server.listen(CFG.PORT, () => {
   console.log('BRAINRUSH server listening on http://localhost:' + CFG.PORT);
+  console.log('Admins: ' + ADMINS.map(a => a.name + ' (' + a.mobile + ')').join(', '));
 });

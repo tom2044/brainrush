@@ -1,24 +1,29 @@
 'use strict';
 
-/* ============================================================
-   BRAINRUSH — App Router
-   ============================================================ */
-
 const ROLE_KEY = 'brainrush:role';
 const TEAM_KEY = 'brainrush:teamid';
 
 const App = {
   role: null,
+  adminSlots: { total: 2, active: 0, available: 2 },
 
   boot() {
     Socket.init();
     try { this.role = sessionStorage.getItem(ROLE_KEY); } catch (e) {}
 
-    Socket.on('connect', () => { this.updateConnBadge(true); this.reattach(); });
-    Socket.on('disconnect', () => { this.updateConnBadge(false); });
+    Socket.on('connect', () => {
+      this.updateConnBadge(true);
+      Socket.emit('admin:slots:get');
+      this.reattach();
+    });
+    Socket.on('disconnect', () => this.updateConnBadge(false));
     Socket.on('state', (s) => {
       if (this.role === 'admin') Admin.setState(s);
       else if (this.role === 'team') Team.setState(s);
+    });
+    Socket.on('admin:slots', (data) => {
+      App.adminSlots = data;
+      if (!App.role) render();
     });
 
     this.updateConnBadge(false);
@@ -26,8 +31,12 @@ const App = {
   },
 
   reattach() {
-    if (this.role === 'admin') Socket.emit('role:admin');
-    else if (this.role === 'team') {
+    if (this.role === 'admin') {
+      let token = null;
+      try { token = sessionStorage.getItem('brainrush:adminToken'); } catch (e) {}
+      if (token) Socket.emit('role:admin', { token });
+      render();
+    } else if (this.role === 'team') {
       let teamId = null;
       try { teamId = sessionStorage.getItem(TEAM_KEY); } catch (e) {}
       Socket.emit('role:team', { teamId });
@@ -37,8 +46,14 @@ const App = {
   setRole(r) {
     this.role = r;
     try { sessionStorage.setItem(ROLE_KEY, r); } catch (e) {}
-    if (r === 'admin') Socket.emit('role:admin');
-    else if (r === 'team') {
+    if (r === 'admin') {
+      const savedToken = (() => {
+        try { return sessionStorage.getItem('brainrush:adminToken'); }
+        catch (e) { return null; }
+      })();
+      if (savedToken) Socket.emit('role:admin', { token: savedToken });
+      // else: Admin.render will show the login screen
+    } else if (r === 'team') {
       let teamId = null;
       try { teamId = sessionStorage.getItem(TEAM_KEY); } catch (e) {}
       Socket.emit('role:team', { teamId });
@@ -47,7 +62,13 @@ const App = {
   },
 
   exitRole() {
-    try { sessionStorage.removeItem(ROLE_KEY); } catch (e) {}
+    try {
+      sessionStorage.removeItem(ROLE_KEY);
+      sessionStorage.removeItem('brainrush:adminToken');
+      sessionStorage.removeItem('brainrush:adminId');
+      sessionStorage.removeItem('brainrush:adminName');
+      sessionStorage.removeItem('brainrush:adminMobile');
+    } catch (e) {}
     location.reload();
   },
 
@@ -77,9 +98,6 @@ function render() {
   }
 }
 
-/* ============================================================
-   WELCOME / LANDING
-   ============================================================ */
 function renderWelcome(root) {
   root.innerHTML = `
     <div class="landing">
@@ -121,10 +139,10 @@ function renderWelcome(root) {
   document.getElementById('enterBtn').addEventListener('click', () => renderRoles(root));
 }
 
-/* ============================================================
-   ROLE SELECTION
-   ============================================================ */
 function renderRoles(root) {
+  const slots = App.adminSlots;
+  const adminAvailable = slots.available > 0;
+
   root.innerHTML = `
     <div class="role-screen">
       <div class="role-header">
@@ -132,11 +150,19 @@ function renderRoles(root) {
         <p>Select how you want to enter the arena</p>
       </div>
       <div class="role-grid">
+        ${adminAvailable ? `
         <div class="role-card" id="rcAdmin">
           <div class="rc-ico">🛡️</div>
           <h3>Admin</h3>
-          <p>Run the show. Approve teams, control rounds, manage questions.</p>
+          <p>Login with mobile OTP. ${slots.available} slot${slots.available === 1 ? '' : 's'} available.</p>
         </div>
+        ` : `
+        <div class="role-card" style="opacity:.45;cursor:not-allowed;filter:grayscale(.6)">
+          <div class="rc-ico">🛡️</div>
+          <h3>Admin — FULL</h3>
+          <p>Both admin slots are in use. Team entry only.</p>
+        </div>
+        `}
         <div class="role-card" id="rcTeam">
           <div class="rc-ico">🎓</div>
           <h3>Team</h3>
@@ -146,14 +172,15 @@ function renderRoles(root) {
       <button class="back-btn" id="backBtn">← BACK TO WELCOME</button>
     </div>`;
 
-  document.getElementById('rcAdmin').onclick = () => App.setRole('admin');
-  document.getElementById('rcTeam').onclick  = () => App.setRole('team');
+  const rcAdmin = document.getElementById('rcAdmin');
+  if (rcAdmin) rcAdmin.onclick = () => {
+    if (App.adminSlots.available > 0) App.setRole('admin');
+    else toast('⚠ Both admin slots are full');
+  };
+  document.getElementById('rcTeam').onclick = () => App.setRole('team');
   document.getElementById('backBtn').onclick = () => renderWelcome(root);
 }
 
-/* ============================================================
-   BOOT
-   ============================================================ */
 try {
   App.boot();
 } catch (e) {

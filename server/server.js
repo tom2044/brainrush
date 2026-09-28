@@ -28,9 +28,10 @@ const CFG = {
    ============================================================ */
 const ADMINS = [
   { id: 'admin1', name: 'Tamal', mobile: '9695848092' },
-  { id: 'admin2', name: 'Joy',   mobile: '8293309467' }
+  { id: 'admin2', name: 'Joy',   mobile: '8293309467' },
+  { id: 'admin3', name: 'Snehasis', mobile: '9732257776' }
 ];
-const MAX_ADMIN_SLOTS = 2;
+const MAX_ADMIN_SLOTS = 3;
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SESSION_GRACE_MS = 30 * 1000;
 

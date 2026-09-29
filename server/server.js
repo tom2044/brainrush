@@ -15,40 +15,21 @@ const CFG = {
   MAX_REGISTERED_TEAMS: 200,
   MIN_TEAMS_TO_START: 2,
 
-  // Selection round
   SELECTION_Q_COUNT: 10,
-  SELECTION_TOTAL_MS: 10 * 60 * 1000,      // 10 minutes total
+  SELECTION_TOTAL_MS: 10 * 60 * 1000,
   SELECTION_CORRECT: 2,
   SELECTION_WRONG: -1,
-  SELECTION_QUALIFY: 10,                    // top 10 advance
+  SELECTION_QUALIFY: 10,
 
-  // R1 - Closest guess
   R1_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
-
-  // R2 - Speed MCQ
   R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
-
-  // R3 - Challenge Matrix
   R3_CORRECT: 10, R3_STEAL: 15, R3_FAIL: -5,
-
-  // R4 - Rapid fire
   R4_CORRECT: 10, R4_WRONG: -5,
-
-  // R5 - Grand Finale buzzer
   R5_CORRECT: 20, R5_WRONG: -10,
 
-  // Timers
-  REVEAL_MS: 4000,
-  BUZZ_WINDOW_MS: 8000,
-  CHALLENGE_MS: 10000,
-  INSTR_SEC: 300,
-  ROUND_INTRO_MS: 3000,
-  TICK_MS: 200,
-
-  // Cuts after each round (how many to eliminate)
+  REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
+  INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
   ROUND_CUTS: { 1: 2, 2: 2, 3: 2, 4: 2 },
-
-  // Disqualification
   DISQUALIFY_GRACE_MS: 3000,
 };
 
@@ -114,7 +95,7 @@ function seedQuestions() {
     unit: '', points: 2, timeLimitSec: 0, isActive: true
   }));
 
-  /* ---- R1: Closest Guess (6 numeric) ---- */
+  /* ---- R1: Closest Guess (6) ---- */
   const R1 = [
     ['Height of the Statue of Unity (m)', 182, 'm'],
     ['Year the first iPhone was released', 2007, ''],
@@ -172,7 +153,7 @@ function seedQuestions() {
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
   }));
 
-  /* ---- R4: Rapid-Fire MCQ (10) ---- */
+  /* ---- R4: Rapid-Fire (10) ---- */
   const R4 = [
     ['2 + 2 x 2 = ?', ['4', '6', '8', '10'], 1],
     ['Capital of India?', ['Mumbai', 'Delhi', 'Kolkata', 'Chennai'], 1],
@@ -190,7 +171,7 @@ function seedQuestions() {
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 15, isActive: true
   }));
 
-  /* ---- R5: Grand Finale Buzzer (10) ---- */
+  /* ---- R5: Grand Finale (10) ---- */
   const R5 = [
     ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
     ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
@@ -225,9 +206,8 @@ class Game {
 
   blankSession() {
     return {
-      state: 'LOBBY',            // LOBBY | INSTRUCTIONS | SELECTION | ROUND_INTRO |
-                                  // QUESTION_ACTIVE | QUESTION_REVEAL | ROUND_END | FINISHED
-      round: 0,                  // 0 = selection, 1..5 = rounds
+      state: 'LOBBY',
+      round: 0,
       qIndex: 0,
       currentQuestionId: null,
       activeTeamIds: [],
@@ -235,7 +215,8 @@ class Game {
       questionStartedAt: null,
       questionEndsAt: null,
       revealEndsAt: null,
-      selectionEndsAt: null,      // selection round global timer
+      selectionEndsAt: null,
+      selectionAnswers: {},
       buzzerLockedByTeamId: null,
       buzzerLockEndsAt: null,
       challenge: null,
@@ -256,15 +237,6 @@ class Game {
   leaderboard(ids) {
     const list = ids || this.session.activeTeamIds;
     return this.teams.filter(t => list.includes(t.id)).slice()
-      .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
-                   || (a.latency || 0) - (b.latency || 0));
-  }
-
-  /* ---- Selection leaderboard: by score desc, then time asc ---- */
-  selectionLeaderboard() {
-    return this.teams
-      .filter(t => t.status === 'active' || t.status === 'approved')
-      .slice()
       .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
                    || (a.latency || 0) - (b.latency || 0));
   }
@@ -304,9 +276,59 @@ class Game {
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
 
-  /* ---- SUBMIT ANSWER ---- */
+  /* ---- SUBMIT (handles selection specially) ---- */
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
+
+    /* === SELECTION ROUND: per-team, per-question, with edit-before-submit === */
+    if (s.state === 'SELECTION') {
+      const rec = s.selectionAnswers[teamId];
+      if (!rec) return { ok: false, reason: 'Not in selection' };
+
+      const qs = this.roundQuestions(0);
+      const myQ = qs[rec.qIndex];
+      if (!myQ || myQ.id !== questionId) return { ok: false, reason: 'Stale question' };
+      if (rec.answers[questionId] != null) return { ok: false, reason: 'Already answered' };
+
+      const answeredAt = Date.now();
+      const norm = String(answer == null ? '' : answer).toLowerCase().trim();
+      const ok = norm === myQ.correctAnswer;
+
+      let pts = 0;
+      if (ok) {
+        const sec = (answeredAt - (rec.qStartedAt || answeredAt)) / 1000;
+        const speedBonus = Math.max(0, Math.floor((10 - sec) / 2));
+        pts = CFG.SELECTION_CORRECT + speedBonus;
+      } else {
+        pts = CFG.SELECTION_WRONG;
+      }
+
+      rec.answers[questionId] = { raw: answer, isCorrect: ok, pts, at: answeredAt, locked: true };
+
+      const t = this.team(teamId);
+      if (t) {
+        t.points.r0 = (t.points.r0 || 0) + pts;
+        t.points.total = (t.points.total || 0) + pts;
+        t.latency += (answeredAt - (rec.qStartedAt || answeredAt));
+      }
+
+      this.answers.push({
+        id: uuid(), questionId, teamId, roundNumber: 0,
+        rawAnswer: answer, receivedAt: answeredAt,
+        latencyMs: answeredAt - (rec.qStartedAt || answeredAt),
+        isCorrect: ok, pointsAwarded: pts,
+        wasChallenge: false, guessDelta: null, wasSkip: false
+      });
+
+      // advance to next question for THIS team only
+      rec.qIndex += 1;
+      rec.qStartedAt = Date.now();
+
+      this.onChange();
+      return { ok: true };
+    }
+
+    /* === Normal rounds (1–5) === */
     if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
     const q = this.currentQuestion();
     if (!q || q.id !== questionId) return { ok: false, reason: 'Stale question' };
@@ -314,13 +336,11 @@ class Game {
     if (this.answers.some(a => a.questionId === questionId && a.teamId === teamId))
       return { ok: false, reason: 'Already answered' };
 
-    // R3 turn enforcement
     if (s.round === 3) {
       if (s.challenge && s.challenge.questionId === questionId) {
         if (teamId !== s.challenge.challengerId) return { ok: false, reason: 'Not your turn' };
       } else if (teamId !== s.activeTeamId) return { ok: false, reason: 'Not your turn' };
     }
-    // R5 buzzer enforcement
     if (s.round === 5 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
 
@@ -331,27 +351,76 @@ class Game {
       latencyMs: receivedAt - (s.questionStartedAt || receivedAt),
       isCorrect: false, pointsAwarded: 0,
       wasChallenge: !!(s.challenge && s.challenge.challengerId === teamId),
-      guessDelta: null
+      guessDelta: null, wasSkip: false
     };
     this.answers.push(rec);
     const t = this.team(teamId);
     if (t) t.latency += rec.latencyMs;
 
-    if (s.round === 0) this.evalSelectionSingle(rec, q);
-    else if (s.round === 1) {
+    if (s.round === 1) {
       if (this.allAnswered(q)) this.finishQuestion();
       else this.onChange();
-    }
-    else if (s.round === 2) {
+    } else if (s.round === 2) {
       if (this.allAnswered(q)) this.finishQuestion();
       else this.onChange();
-    }
-    else if (s.round === 3) this.evalR3Single(rec, q);
+    } else if (s.round === 3) this.evalR3Single(rec, q);
     else if (s.round === 4) {
       if (this.allAnswered(q)) this.finishQuestion();
       else this.onChange();
-    }
-    else if (s.round === 5) this.evalR5Single(rec, q);
+    } else if (s.round === 5) this.evalR5Single(rec, q);
+
+    return { ok: true };
+  }
+
+  /* ---- SELECTION: skip current question ---- */
+  skipSelectionQuestion({ teamId }) {
+    const s = this.session;
+    if (s.state !== 'SELECTION') return { ok: false };
+    const rec = s.selectionAnswers[teamId];
+    if (!rec) return { ok: false, reason: 'Not in selection' };
+    const qs = this.roundQuestions(0);
+    const myQ = qs[rec.qIndex];
+    if (!myQ) return { ok: false, reason: 'No more questions' };
+    if (rec.answers[myQ.id] != null) return { ok: false, reason: 'Already answered' };
+
+    const now = Date.now();
+    rec.answers[myQ.id] = { raw: '__skip__', isCorrect: false, pts: 0, at: now, locked: true };
+    this.answers.push({
+      id: uuid(), questionId: myQ.id, teamId, roundNumber: 0,
+      rawAnswer: '__skip__', receivedAt: now,
+      latencyMs: now - (rec.qStartedAt || now),
+      isCorrect: false, pointsAwarded: 0,
+      wasChallenge: false, guessDelta: null, wasSkip: true
+    });
+    rec.qIndex += 1;
+    rec.qStartedAt = Date.now();
+    this.onChange();
+    return { ok: true };
+  }
+
+  /* ---- SELECTION: go back to previous question ---- */
+  selectionGoBack({ teamId }) {
+    const s = this.session;
+    if (s.state !== 'SELECTION') return { ok: false };
+    const rec = s.selectionAnswers[teamId];
+    if (!rec) return { ok: false, reason: 'Not in selection' };
+    if (rec.qIndex <= 0) return { ok: false, reason: 'At first question' };
+    rec.qIndex -= 1;
+    this.onChange();
+    return { ok: true };
+  }
+
+  /* ---- SELECTION: move forward past a locked question ---- */
+  selectionForward({ teamId }) {
+    const s = this.session;
+    if (s.state !== 'SELECTION') return { ok: false };
+    const rec = s.selectionAnswers[teamId];
+    if (!rec) return { ok: false, reason: 'Not in selection' };
+    const qs = this.roundQuestions(0);
+    if (rec.qIndex + 1 > qs.length) return { ok: false, reason: 'No more questions' };
+    rec.qIndex += 1;
+    rec.qStartedAt = rec.qStartedAt || Date.now();
+    this.onChange();
     return { ok: true };
   }
 
@@ -445,7 +514,6 @@ class Game {
   }
   closeInstructions() { this.session.state = 'LOBBY'; this.onChange(); }
 
-  /* Start the selection round */
   startSelection() {
     const s = this.session;
     const approved = this.teams.filter(t => t.status === 'approved' || t.status === 'active');
@@ -463,24 +531,28 @@ class Game {
     s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
     s.selectionEndsAt = Date.now() + CFG.SELECTION_TOTAL_MS;
+    s.selectionAnswers = {};
 
-    // reset per-round points
     approved.forEach(t => {
       t.status = 'active';
       t.points.r0 = 0;
-      // don't reset total — keep manual adjustments
+      s.selectionAnswers[t.id] = { qIndex: 0, answers: {}, qStartedAt: Date.now() };
     });
 
     this.onChange();
     return { ok: true };
   }
 
-  /* Qualify top 10 → begin Round 1 */
   qualifyFromSelection() {
     const s = this.session;
-    const lb = this.selectionLeaderboard();
-    const qualifiers = lb.slice(0, CFG.SELECTION_QUALIFY);
-    const eliminated = lb.slice(CFG.SELECTION_QUALIFY);
+    const ranked = this.teams
+      .filter(t => t.status === 'active')
+      .slice()
+      .sort((a, b) => (b.points.r0 || 0) - (a.points.r0 || 0)
+                   || (a.latency || 0) - (b.latency || 0));
+
+    const qualifiers = ranked.slice(0, CFG.SELECTION_QUALIFY);
+    const eliminated = ranked.slice(CFG.SELECTION_QUALIFY);
 
     eliminated.forEach(t => {
       t.status = 'eliminated';
@@ -494,7 +566,6 @@ class Game {
     return { ok: true, qualified: qualifiers.length };
   }
 
-  /* Start a specific round (1..5). Assumes activeTeamIds already set. */
   startRound(n) {
     const s = this.session;
     const active = this.teams.filter(t => s.activeTeamIds.includes(t.id));
@@ -510,8 +581,6 @@ class Game {
     s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
     s.selectionEndsAt = null;
-
-    // For R3 (challenge matrix), assign first turn
     s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
 
     active.forEach(t => { if (t.status === 'approved') t.status = 'active'; });
@@ -541,11 +610,9 @@ class Game {
     this.onChange();
   }
 
-  /* Advance to next question OR finish the round */
   nextQuestion() {
     const s = this.session;
 
-    // Selection round: skip to next question without waiting for everyone
     if (s.round === 0) {
       const qs = this.roundQuestions(0);
       if (s.qIndex + 1 >= qs.length) return this.qualifyFromSelection();
@@ -628,24 +695,6 @@ class Game {
     this.onChange();
   }
 
-  /* ---- SELECTION scoring ---- */
-  evalSelectionSingle(rec, q) {
-    const norm = String(rec.rawAnswer == null ? '' : rec.rawAnswer).toLowerCase().trim();
-    const ok = norm === q.correctAnswer;
-    rec.isCorrect = ok;
-
-    if (ok) {
-      const sec = rec.latencyMs / 1000;
-      const speedBonus = Math.max(0, Math.floor((10 - sec) / 2));
-      rec.pointsAwarded = CFG.SELECTION_CORRECT + speedBonus;
-    } else {
-      rec.pointsAwarded = CFG.SELECTION_WRONG;
-    }
-    this.addPoints(rec.teamId, 0, rec.pointsAwarded);
-    this.onChange();
-  }
-
-  /* ---- R1 ---- */
   evalR1() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -666,7 +715,6 @@ class Game {
     };
   }
 
-  /* ---- R2 ---- */
   evalR2() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -684,7 +732,6 @@ class Game {
     };
   }
 
-  /* ---- R3 ---- */
   evalR3Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
@@ -708,7 +755,6 @@ class Game {
     this.finishQuestion();
   }
 
-  /* ---- R4 ---- */
   evalR4() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -720,14 +766,11 @@ class Game {
     });
     this.session.lastReveal = {
       questionId: q.id, correctAnswer: q.correctAnswer,
-      results: answers.map(a => ({
-        teamId: a.teamId, correct: a.isCorrect, points: a.pointsAwarded
-      })),
+      results: answers.map(a => ({ teamId: a.teamId, correct: a.isCorrect, points: a.pointsAwarded })),
       note: 'RAPID FIRE'
     };
   }
 
-  /* ---- R5 ---- */
   evalR5Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
@@ -741,7 +784,6 @@ class Game {
     this.finishQuestion();
   }
 
-  /* ---- ADMIN question CRUD ---- */
   addQuestion(o) {
     const rq = this.roundQuestions(o.roundNumber);
     const order = rq.length ? Math.max(...rq.map(q => q.order)) + 1 : 1;
@@ -784,15 +826,14 @@ class Game {
     this.onChange();
   }
 
-  /* ---- TICK ---- */
   tick() {
     const s = this.session;
     const n = Date.now();
 
-    /* Selection round global timer */
     if (s.state === 'SELECTION') {
       if (s.selectionEndsAt && n >= s.selectionEndsAt) {
-        return this.qualifyFromSelection() ? true : false;
+        this.qualifyFromSelection();
+        return true;
       }
       return false;
     }
@@ -801,7 +842,6 @@ class Game {
       const q = this.currentQuestion();
       if (!q) return false;
 
-      /* R5 buzzer timeout */
       if (s.round === 5 && s.buzzerLockedByTeamId && s.buzzerLockEndsAt && n >= s.buzzerLockEndsAt) {
         const lockedId = s.buzzerLockedByTeamId;
         this.addPoints(lockedId, 5, CFG.R5_WRONG);
@@ -813,7 +853,6 @@ class Game {
         this.finishQuestion();
         return true;
       }
-      /* R3 challenge timeout */
       if (s.round === 3 && s.challenge && n >= s.challenge.endsAt) {
         const cid = s.challenge.challengerId;
         this.addPoints(cid, 3, CFG.R3_FAIL);
@@ -825,13 +864,12 @@ class Game {
         this.finishQuestion();
         return true;
       }
-      /* Question timer */
       if (s.questionEndsAt && n >= s.questionEndsAt) {
         this.finishQuestion();
         return true;
       }
     } else if (s.state === 'QUESTION_REVEAL') {
-      // Manual mode — admin advances
+      // manual mode
     } else if (s.state === 'INSTRUCTIONS') {
       if (s.instructionsEndsAt && n >= s.instructionsEndsAt) {
         s.state = 'LOBBY';
@@ -860,7 +898,6 @@ function sanitizeForTeam(db) {
   }
   return out;
 }
-
 function snapshot(game, role) {
   const db = {
     session: game.session, questions: game.questions,
@@ -1018,6 +1055,21 @@ function setupSocket(io) {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       ack && ack(game.submitAnswer({ teamId: tid, questionId, answer }));
+    });
+    socket.on('team:skipSelection', (_, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.skipSelectionQuestion({ teamId: tid }));
+    });
+    socket.on('team:selectionBack', (_, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.selectionGoBack({ teamId: tid }));
+    });
+    socket.on('team:selectionForward', (_, ack) => {
+      const tid = socket.data.teamId;
+      if (!tid) return ack && ack({ ok: false });
+      ack && ack(game.selectionForward({ teamId: tid }));
     });
     socket.on('team:buzz', ({ questionId }, ack) => {
       const tid = socket.data.teamId;

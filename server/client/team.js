@@ -248,62 +248,125 @@ const Team = {
   },
 
   /* ---- SELECTION round UI ---- */
-  selection(c, me, s) {
-    const q = this.currentQuestion();
-    const totalQ = this.roundQuestionsTotal(0);
+    selection(c, me, s) {
+    const allQ = this.state.questions
+      .filter(x => x.roundNumber === 0 && x.isActive)
+      .sort((a, b) => a.order - b.order);
+
+    const rec = (s.selectionAnswers || {})[me.id] || { qIndex: 0, answers: {} };
+    const totalQ = allQ.length;
     const timeLeft = s.selectionEndsAt ? Math.max(0, (s.selectionEndsAt - now()) / 1000) : 0;
 
-    // Already answered this question?
-    const myAns = q ? this.state.answers.find(a => a.questionId === q.id && a.teamId === me.id) : null;
+    // current question (may be undefined if past last)
+    const q = allQ[rec.qIndex];
+    const done = !q;
+
+    // is current question locked (already answered/skipped)?
+    const locked = !done && rec.answers[q.id] != null;
+    const lockedData = locked ? rec.answers[q.id] : null;
+
+    // is this the last question?
+    const isLast = !done && (rec.qIndex + 1 >= totalQ);
+
+    // previous button enabled?
+    const canPrev = rec.qIndex > 0;
 
     c.innerHTML = `
       <div class="stage">
         <div class="qheader">
           <div class="flex">
             <span class="pill round" style="background:rgba(57,255,136,.15);color:var(--acid-green);border-color:rgba(57,255,136,.5)">SELECTION ROUND</span>
-            <span class="pill qnum">Q ${s.qIndex + 1} / ${totalQ}</span>
+            <span class="pill qnum">Q ${Math.min(rec.qIndex + 1, totalQ)} / ${totalQ}</span>
           </div>
           <div class="timer" id="selTimer" style="color:var(--acid-green);text-shadow:0 0 24px rgba(57,255,136,.6)">${fmtClock(timeLeft)}</div>
         </div>
         <div class="timer-bar"><div id="selBar" style="width:${(timeLeft / 600) * 100}%;background:linear-gradient(90deg,var(--acid-green),#39ff88)"></div></div>
 
-        ${q ? `
+        ${done ? `
+          <div class="result-banner good" style="font-size:18px">
+            ✓ All questions answered!
+          </div>
+          <p class="muted center mt">Waiting for other teams / admin to end the round…</p>
+        ` : `
           <div class="qtext-big">${esc(q.text)}</div>
-          ${myAns
-            ? `<div class="result-banner neutral">Answer locked: <b>${esc(String(myAns.rawAnswer))}</b></div>
-               <p class="muted small center mt">Waiting for other teams / next question…</p>`
-            : `<div class="saq-input">
-                 <input id="saqAnswer" type="text" placeholder="Type your answer…" autocomplete="off" maxlength="60" autocapitalize="off" spellcheck="false">
-                 <button class="btn primary block mt" id="saqSubmit">SUBMIT →</button>
-               </div>`
-          }
-        ` : `<p class="muted center">Preparing question…</p>`}
+
+          ${locked ? `
+            <div class="result-banner neutral">
+              🔒 Answer locked: <b>${esc(lockedData.raw === '__skip__' ? '(skipped)' : String(lockedData.raw))}</b>
+            </div>
+          ` : `
+            <div class="saq-input">
+              <input id="saqAnswer" type="text" placeholder="Type your answer…" autocomplete="off" maxlength="60" autocapitalize="off" spellcheck="false">
+            </div>
+          `}
+
+          <div class="flex mt" style="gap:10px">
+            <button class="btn ghost" id="saqPrev" style="flex:1" ${canPrev ? '' : 'disabled'}>← PREVIOUS</button>
+
+            ${locked ? `
+              <button class="btn primary" id="saqNext" style="flex:2">
+                ${isLast ? 'FINISH ✓' : 'NEXT →'}
+              </button>
+            ` : `
+              <button class="btn ghost" id="saqSkip" style="flex:1">⏭ SKIP</button>
+              <button class="btn primary" id="saqSubmit" style="flex:2">
+                ${isLast ? 'SUBMIT & FINISH →' : 'SUBMIT & NEXT →'}
+              </button>
+            `}
+          </div>
+        `}
 
         <div class="card mt">
           <h3>YOUR SCORE</h3>
           <div class="flex-between">
             <div><span class="stat"><span class="v">${me.points.r0 || 0}</span><span class="l">Selection points</span></span></div>
-            <div><span class="stat"><span class="v">${me.points.total || 0}</span><span class="l">Total</span></span></div>
+            <div><span class="stat"><span class="v">${Object.keys(rec.answers || {}).length}</span><span class="l">Answered</span></span></div>
           </div>
         </div>
       </div>`;
 
-    // Bind submit
-    const input = document.getElementById('saqAnswer');
-    const btn = document.getElementById('saqSubmit');
-    const submit = () => {
-      if (!q) return;
-      const v = input.value.trim();
-      if (!v) return toast('⚠ Type an answer first');
-      Team.submitAnswer(q.id, v);
-    };
-    if (btn) btn.onclick = submit;
-    if (input) {
-      input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
-      setTimeout(() => input.focus(), 50);
+    if (!done) {
+      const input = document.getElementById('saqAnswer');
+      const subBtn = document.getElementById('saqSubmit');
+      const skipBtn = document.getElementById('saqSkip');
+      const prevBtn = document.getElementById('saqPrev');
+      const nextBtn = document.getElementById('saqNext');
+
+      if (subBtn) {
+        subBtn.onclick = () => {
+          const v = input.value.trim();
+          if (!v) return toast('⚠ Type an answer or press SKIP');
+          Team.submitAnswer(q.id, v);
+        };
+      }
+      if (skipBtn) {
+        skipBtn.onclick = () => {
+          Socket.emit('team:skipSelection', {}, (r) => {
+            if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot skip'));
+          });
+        };
+      }
+      if (prevBtn) {
+        prevBtn.onclick = () => {
+          Socket.emit('team:selectionBack', {}, (r) => {
+            if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot go back'));
+          });
+        };
+      }
+      if (nextBtn) {
+        nextBtn.onclick = () => {
+          Socket.emit('team:selectionForward', {}, (r) => {
+            if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot advance'));
+          });
+        };
+      }
+      if (input) {
+        input.onkeydown = (e) => { if (e.key === 'Enter' && subBtn) subBtn.click(); };
+        setTimeout(() => input.focus(), 50);
+      }
     }
 
-    // Local timer for the selection countdown
+    // local countdown
     if (this.timerHandle) clearInterval(this.timerHandle);
     const tEl = document.getElementById('selTimer');
     const bEl = document.getElementById('selBar');

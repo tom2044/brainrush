@@ -277,16 +277,13 @@ const Admin = {
           <button class="btn ${canStartSelection ? 'good' : ''}" id="startSel" ${canStartSelection ? '' : 'disabled'}>🎯 START SELECTION ROUND</button>
           <button class="btn ghost" id="closeInstr">CLOSE</button>
         </div>`;
-    } else if (s.state === 'SELECTION') {
-      const qs = this.roundQuestions(0);
+        } else if (s.state === 'SELECTION') {
       const timeLeft = s.selectionEndsAt ? Math.max(0, Math.ceil((s.selectionEndsAt - Date.now()) / 1000)) : 0;
       controls = `
-        <p class="muted mb">Selection round in progress. ${qs.length} questions, ${fmtClock(timeLeft)} remaining.</p>
-        <div class="flex mb">
-          <button class="btn primary" id="nextSelQ">⏩ NEXT QUESTION</button>
-          <button class="btn good" id="qualifyNow">🏁 END &amp; QUALIFY TOP 10</button>
-        </div>
-        <p class="small muted">The round will auto-end when the 10-minute timer hits zero.</p>`;
+        <p class="muted mb">Selection round in progress. ${fmtClock(timeLeft)} remaining.</p>
+        <button class="btn good block" id="qualifyNow">🏁 END &amp; QUALIFY TOP 10</button>
+        <p class="small muted mt">Teams answer at their own pace. Round auto-ends when the 10-minute timer hits zero.</p>`;
+    
     } else if (s.state === 'ROUND_INTRO') {
       controls = '<p class="muted">Round intro — auto-advancing…</p>';
     } else if (s.state === 'QUESTION_ACTIVE') {

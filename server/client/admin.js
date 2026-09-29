@@ -69,6 +69,13 @@ const Admin = {
   },
   sendToInstructions()    { Socket.emit('admin:sendToInstructions'); },
   closeInstructions()     { Socket.emit('admin:closeInstructions'); },
+  startSelection()        { Socket.emit('admin:startSelection', {}, (r) => {
+                              if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot start selection'));
+                            }); },
+  qualifySelection()      { Socket.emit('admin:qualifySelection', {}, (r) => {
+                              if (r && r.ok) toast('✓ ' + r.qualified + ' teams qualified');
+                              else if (r) toast('⚠ ' + (r.reason || 'Failed'));
+                            }); },
   startRound(n)           { Socket.emit('admin:startRound', { round: n }, (r) => {
                               if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot start'));
                             }); },
@@ -101,17 +108,6 @@ const Admin = {
       .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
                    || (a.latency || 0) - (b.latency || 0));
   },
-    startSelection() {
-    Socket.emit('admin:startSelection', {}, (r) => {
-      if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot start selection'));
-    });
-  },
-  qualifySelection() {
-    Socket.emit('admin:qualifySelection', {}, (r) => {
-      if (r && r.ok) toast('✓ ' + r.qualified + ' teams qualified');
-      else if (r) toast('⚠ ' + (r.reason || 'Failed'));
-    });
-  },
 
   /* ---- Render dispatcher ---- */
   render(root) {
@@ -124,6 +120,7 @@ const Admin = {
     const s = db.session;
     const labels = {
       LOBBY:'Lobby', INSTRUCTIONS:'Instructions', ROUND_INTRO:'Round Intro',
+      SELECTION:'Selection Round',
       QUESTION_ACTIVE:'Question Live', QUESTION_REVEAL:'Reveal',
       ROUND_END:'Round End', FINISHED:'Finished'
     };
@@ -134,7 +131,7 @@ const Admin = {
           <div class="brand"><span class="dot"></span>BRAINRUSH <span class="badge info">${esc(this.adminName || 'ADMIN')}</span></div>
           <div class="flex">
             <span class="badge ${s.state === 'QUESTION_ACTIVE' ? 'live' : ''}">${labels[s.state] || s.state}</span>
-            <span class="badge">R${s.round || '-'} · Q${s.qIndex + 1}</span>
+            <span class="badge">R${s.round} · Q${s.qIndex + 1}</span>
             <button class="btn sm ghost" id="exit">LOGOUT</button>
           </div>
         </div>
@@ -255,7 +252,7 @@ const Admin = {
   },
 
   /* ---- Control tab ---- */
-    renderControl(c) {
+  renderControl(c) {
     const db = this.state;
     const s = db.session;
     const approved = db.teams.filter(t => t.status === 'approved' || t.status === 'active');
@@ -277,13 +274,12 @@ const Admin = {
           <button class="btn ${canStartSelection ? 'good' : ''}" id="startSel" ${canStartSelection ? '' : 'disabled'}>🎯 START SELECTION ROUND</button>
           <button class="btn ghost" id="closeInstr">CLOSE</button>
         </div>`;
-        } else if (s.state === 'SELECTION') {
+    } else if (s.state === 'SELECTION') {
       const timeLeft = s.selectionEndsAt ? Math.max(0, Math.ceil((s.selectionEndsAt - Date.now()) / 1000)) : 0;
       controls = `
-        <p class="muted mb">Selection round in progress. ${fmtClock(timeLeft)} remaining.</p>
+        <p class="muted mb">Selection round in progress. <b>${fmtClock(timeLeft)}</b> remaining.</p>
         <button class="btn good block" id="qualifyNow">🏁 END &amp; QUALIFY TOP 10</button>
-        <p class="small muted mt">Teams answer at their own pace. Round auto-ends when the 10-minute timer hits zero.</p>`;
-    
+        <p class="small muted mt">Teams answer at their own pace. Auto-ends at 0:00.</p>`;
     } else if (s.state === 'ROUND_INTRO') {
       controls = '<p class="muted">Round intro — auto-advancing…</p>';
     } else if (s.state === 'QUESTION_ACTIVE') {
@@ -299,7 +295,6 @@ const Admin = {
         </button>`;
     } else if (s.state === 'ROUND_END') {
       if (s.round === 0) {
-        // Selection just finished — offer start of Round 1
         const qualifiers = s.activeTeamIds.length;
         controls = `<p class="muted mb">Selection complete. <b>${qualifiers}</b> teams qualified.</p>
           <button class="btn primary block" id="startR1">▶ START ROUND 1 (${qualifiers} teams)</button>`;
@@ -353,7 +348,6 @@ const Admin = {
     const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
     bind('instr',       () => this.sendToInstructions());
     bind('startSel',    () => this.startSelection());
-    bind('nextSelQ',    () => this.nextQuestion());
     bind('qualifyNow',  () => this.qualifySelection());
     bind('startR1',     () => this.startRound(1));
     bind('closeInstr',  () => this.closeInstructions());
@@ -368,12 +362,13 @@ const Admin = {
     });
     this.renderLeaderboard(document.getElementById('alb'), false);
   },
-    
 
   adminQuestionHTML(q, s) {
     let body = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">${esc(q.text)}</div>`;
     if (q.type === 'mcq') {
       body += `<div class="small muted mb">Correct: <b style="color:var(--acid-green)">${esc(q.options[q.correctAnswer])}</b></div>`;
+    } else if (q.type === 'saq') {
+      body += `<div class="small muted">Correct: <b style="color:var(--acid-green)">${esc(q.correctAnswer)}</b></div>`;
     } else {
       body += `<div class="small muted">Target: <b style="color:var(--acid-green)">${esc(q.correctAnswer)} ${esc(q.unit || '')}</b></div>`;
     }
@@ -385,7 +380,7 @@ const Admin = {
         return `<div class="small" style="padding:3px 0"><b>${esc(t ? t.teamName : '?')}</b> → <span class="muted">${esc(String(a.rawAnswer))}</span></div>`;
       }).join('');
     }
-    if (s.round === 4 && s.buzzerLockedByTeamId) {
+    if (s.round === 5 && s.buzzerLockedByTeamId) {
       const t = this.state.teams.find(x => x.id === s.buzzerLockedByTeamId);
       body += `<div class="result-banner good" style="margin-top:14px;font-size:13px">🔔 ${esc(t ? t.teamName : '?')}</div>`;
     }
@@ -410,7 +405,7 @@ const Admin = {
       let tag = '<span class="tag no">Pending</span>';
       if (t.status === 'approved')     tag = '<span class="tag ok">Approved</span>';
       if (t.status === 'active')       tag = '<span class="tag ok">In Play</span>';
-      if (t.status === 'eliminated')   tag = `<span class="tag out">Out R${t.eliminatedInRound || '?'}</span>`;
+      if (t.status === 'eliminated')   tag = `<span class="tag out">Out R${t.eliminatedInRound == null ? '?' : t.eliminatedInRound}</span>`;
       if (t.status === 'disqualified') tag = '<span class="tag out" style="background:rgba(255,71,87,.3);color:#fff">DISQUALIFIED</span>';
       if (t.status === 'winner')       tag = `<span class="tag ok">#${t.finalRank || '?'}</span>`;
       return `
@@ -456,15 +451,17 @@ const Admin = {
     if (apAll) apAll.onclick = () => this.approveAll();
   },
 
+  /* ---- Q-BANK ---- */
   renderBank(c) {
-    const rounds = [1, 2, 3, 4];
+    const rounds = [0, 1, 2, 3, 4, 5];
     let left = '';
     rounds.forEach(r => {
       const qs = this.roundQuestions(r);
+      const title = r === 0 ? 'SELECTION' : ('ROUND ' + r);
       left += `
         <div class="card mb">
           <div class="flex-between mb">
-            <h3 style="margin:0">ROUND ${r} (${qs.length})</h3>
+            <h3 style="margin:0">${title} (${qs.length})</h3>
             <button class="btn sm primary" data-add="${r}">+ ADD</button>
           </div>
           ${qs.length ? qs.map((q, i) => this.qRow(q, i, qs.length)).join('') : '<p class="muted small">No questions.</p>'}
@@ -493,13 +490,14 @@ const Admin = {
   qRow(q, idx, total) {
     let preview = '';
     if (q.type === 'mcq') preview = `MCQ · <b style="color:var(--acid-green)">${esc(q.options[q.correctAnswer])}</b>`;
+    else if (q.type === 'saq') preview = `SAQ · <b style="color:var(--acid-green)">${esc(q.correctAnswer)}</b>`;
     else preview = `Numeric · <b style="color:var(--acid-green)">${esc(q.correctAnswer)} ${esc(q.unit || '')}</b>`;
     return `
       <div class="qrow">
         <div style="font-family:monospace;font-weight:800;color:var(--mut);min-width:20px">${idx + 1}</div>
         <div class="qbody">
           <div class="qtext">${esc(q.text)}</div>
-          <div class="qmeta">${preview} · ⏱ ${q.timeLimitSec}s</div>
+          <div class="qmeta">${preview}${q.timeLimitSec ? ' · ⏱ ' + q.timeLimitSec + 's' : ''}</div>
         </div>
         <div class="qops">
           <button class="iconbtn" data-up="${q.id}" ${idx === 0 ? 'disabled' : ''}>▲</button>
@@ -515,24 +513,30 @@ const Admin = {
     if (!panel) return;
     const isEdit = !!existing;
     const q = existing || {
-      text: '', type: roundNumber === 1 ? 'closest_guess' : 'mcq',
-      options: ['', '', '', ''], correctAnswer: 0,
-      timeLimitSec: roundNumber === 4 ? 15 : roundNumber === 2 ? 20 : 30,
-      points: roundNumber === 4 ? 20 : 10, unit: ''
+      text: '',
+      type: roundNumber === 0 ? 'saq' : (roundNumber === 1 ? 'closest_guess' : 'mcq'),
+      options: ['', '', '', ''],
+      correctAnswer: roundNumber === 0 ? '' : 0,
+      timeLimitSec: roundNumber === 0 ? 0 : (roundNumber === 4 || roundNumber === 5 ? 15 : roundNumber === 2 ? 20 : 30),
+      points: roundNumber === 0 ? 2 : (roundNumber === 5 ? 20 : 10),
+      unit: ''
     };
 
+    const titlePrefix = roundNumber === 0 ? 'SELECTION' : ('ROUND ' + roundNumber);
+
     panel.innerHTML = `
-      <h3>${isEdit ? 'EDIT' : 'ADD — ROUND ' + roundNumber}</h3>
+      <h3>${isEdit ? 'EDIT' : 'ADD — ' + titlePrefix}</h3>
       <div class="field"><label>QUESTION TEXT</label><textarea id="qet" rows="3">${esc(q.text)}</textarea></div>
       <div class="field"><label>TYPE</label>
         <select id="qey" ${isEdit ? 'disabled' : ''}>
+          <option value="saq" ${q.type === 'saq' ? 'selected' : ''}>Short Answer (text/number)</option>
           <option value="closest_guess" ${q.type === 'closest_guess' ? 'selected' : ''}>Closest Guess (numeric)</option>
           <option value="mcq" ${q.type === 'mcq' ? 'selected' : ''}>Multiple Choice</option>
         </select>
       </div>
       <div id="qef"></div>
       <div class="grid two" style="gap:10px">
-        <div class="field"><label>TIME (sec)</label><input id="qetm" type="number" min="5" value="${q.timeLimitSec}"></div>
+        <div class="field"><label>TIME (sec)</label><input id="qetm" type="number" min="0" value="${q.timeLimitSec}"></div>
         <div class="field"><label>POINTS</label><input id="qept" type="number" min="1" value="${q.points}"></div>
       </div>
       <div class="flex mt">
@@ -551,6 +555,15 @@ const Admin = {
               <input class="qeo" data-i="${i}" value="${esc(q.options && q.options[i] ? q.options[i] : '')}" placeholder="Option ${String.fromCharCode(65 + i)}">
             </div>`).join('')}
         </div>`;
+      } else if (t === 'saq') {
+        f.innerHTML = `<div class="field">
+          <label>CORRECT ANSWER (case-insensitive · 1–2 words or a number)</label>
+          <input id="qea" type="text" value="${esc(q.correctAnswer == null ? '' : q.correctAnswer)}"
+                 placeholder="e.g. newton" autocomplete="off" maxlength="60">
+        </div>
+        <p class="small muted" style="margin-top:-6px;margin-bottom:10px">
+          Teams must type this exactly (case is ignored). Example: "Central Processing Unit" matches "central processing unit".
+        </p>`;
       } else {
         f.innerHTML = `<div class="grid two" style="gap:10px">
           <div class="field"><label>ANSWER</label><input id="qea" type="number" value="${q.correctAnswer}"></div>
@@ -560,26 +573,35 @@ const Admin = {
     };
     renderFields();
     document.getElementById('qey').onchange = renderFields;
+
     document.getElementById('qec').onclick = () => {
       panel.innerHTML = '<h3>EDIT PANEL</h3><p class="muted small">Click a question to edit.</p>';
     };
+
     document.getElementById('qes').onclick = () => {
       const text = document.getElementById('qet').value.trim();
       if (!text) return toast('⚠ Question text required');
       const type = document.getElementById('qey').value;
-      const tm = +document.getElementById('qetm').value || 30;
-      const pts = +document.getElementById('qept').value || 10;
+      const tm = +document.getElementById('qetm').value || (type === 'saq' ? 0 : 30);
+      const pts = +document.getElementById('qept').value || (type === 'saq' ? 2 : 10);
+
       let options, ca, unit = '';
+
       if (type === 'mcq') {
         options = Array.from(document.querySelectorAll('.qeo')).map(el => el.value.trim());
         if (options.some(o => !o)) return toast('⚠ All options required');
         const sel = document.querySelector('input[name="qer"]:checked');
         ca = sel ? +sel.value : 0;
+      } else if (type === 'saq') {
+        ca = document.getElementById('qea').value.trim().toLowerCase();
+        if (!ca) return toast('⚠ Correct answer required');
+        if (ca.length > 60) return toast('⚠ Answer too long (max 60 chars)');
       } else {
         ca = Number(document.getElementById('qea').value);
         if (!isFinite(ca)) return toast('⚠ Valid number required');
         unit = document.getElementById('qeu').value.trim();
       }
+
       if (isEdit) {
         this.editQuestion(existing.id, { text, options, correctAnswer: ca, unit, timeLimitSec: tm, points: pts });
         toast('✓ Saved');
@@ -605,7 +627,7 @@ const Admin = {
       return `<div class="lb-row ${cls}">
         <div class="rank">${i + 1}</div>
         <div class="tname">${esc(t.teamName)}
-          <div class="small muted">R1 ${t.points.r1 || 0} · R2 ${t.points.r2 || 0} · R3 ${t.points.r3 || 0} · R4 ${t.points.r4 || 0}</div>
+          <div class="small muted">R0 ${t.points.r0 || 0} · R1 ${t.points.r1 || 0} · R2 ${t.points.r2 || 0} · R3 ${t.points.r3 || 0} · R4 ${t.points.r4 || 0} · R5 ${t.points.r5 || 0}</div>
         </div>
         <div class="pts">${t.points.total || 0}</div>
       </div>`;

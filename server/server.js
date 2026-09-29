@@ -76,7 +76,6 @@ setInterval(pruneStaleSessions, 10000);
 function seedQuestions() {
   const out = [];
 
-  /* ---- SELECTION ROUND (10 SAQ) ---- */
   const SEL = [
     ['Full form of CPU', 'central processing unit'],
     ['Unit of force (SI)', 'newton'],
@@ -95,7 +94,6 @@ function seedQuestions() {
     unit: '', points: 2, timeLimitSec: 0, isActive: true
   }));
 
-  /* ---- R1: Closest Guess (6) ---- */
   const R1 = [
     ['Height of the Statue of Unity (m)', 182, 'm'],
     ['Year the first iPhone was released', 2007, ''],
@@ -109,7 +107,6 @@ function seedQuestions() {
     text: t, correctAnswer: a, unit: u, points: 10, timeLimitSec: 45, isActive: true
   }));
 
-  /* ---- R2: Speed MCQ (10) ---- */
   const R2 = [
     ['Capital of Australia?', ['Sydney', 'Canberra', 'Melbourne', 'Perth'], 1],
     ['Which planet is the Red Planet?', ['Venus', 'Mars', 'Jupiter', 'Mercury'], 1],
@@ -127,7 +124,6 @@ function seedQuestions() {
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 20, isActive: true
   }));
 
-  /* ---- R3: Challenge Matrix (18) ---- */
   const R3 = [
     ['Largest planet?', ['Saturn', 'Jupiter', 'Neptune', 'Earth'], 1],
     ['Longest river in the world?', ['Amazon', 'Yangtze', 'Nile', 'Mississippi'], 2],
@@ -153,7 +149,6 @@ function seedQuestions() {
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
   }));
 
-  /* ---- R4: Rapid-Fire (10) ---- */
   const R4 = [
     ['2 + 2 x 2 = ?', ['4', '6', '8', '10'], 1],
     ['Capital of India?', ['Mumbai', 'Delhi', 'Kolkata', 'Chennai'], 1],
@@ -171,7 +166,6 @@ function seedQuestions() {
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 15, isActive: true
   }));
 
-  /* ---- R5: Grand Finale (10) ---- */
   const R5 = [
     ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
     ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
@@ -280,7 +274,7 @@ class Game {
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
 
-    /* === SELECTION ROUND: per-team, per-question, with edit-before-submit === */
+    /* === SELECTION ROUND === */
     if (s.state === 'SELECTION') {
       const rec = s.selectionAnswers[teamId];
       if (!rec) return { ok: false, reason: 'Not in selection' };
@@ -320,12 +314,11 @@ class Game {
         wasChallenge: false, guessDelta: null, wasSkip: false
       });
 
-      // advance to next question for THIS team only
       rec.qIndex += 1;
       rec.qStartedAt = Date.now();
 
-      this.onChange();
-      return { ok: true };
+      // Do NOT broadcast — socket handler will send a private update
+      return { ok: true, privateUpdate: true };
     }
 
     /* === Normal rounds (1–5) === */
@@ -372,7 +365,7 @@ class Game {
     return { ok: true };
   }
 
-  /* ---- SELECTION: skip current question ---- */
+  /* ---- SELECTION: skip ---- */
   skipSelectionQuestion({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -394,11 +387,10 @@ class Game {
     });
     rec.qIndex += 1;
     rec.qStartedAt = Date.now();
-    this.onChange();
-    return { ok: true };
+    return { ok: true, privateUpdate: true };
   }
 
-  /* ---- SELECTION: go back to previous question ---- */
+  /* ---- SELECTION: back ---- */
   selectionGoBack({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -406,11 +398,10 @@ class Game {
     if (!rec) return { ok: false, reason: 'Not in selection' };
     if (rec.qIndex <= 0) return { ok: false, reason: 'At first question' };
     rec.qIndex -= 1;
-    this.onChange();
-    return { ok: true };
+    return { ok: true, privateUpdate: true };
   }
 
-  /* ---- SELECTION: move forward past a locked question ---- */
+  /* ---- SELECTION: forward ---- */
   selectionForward({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -420,8 +411,7 @@ class Game {
     if (rec.qIndex + 1 > qs.length) return { ok: false, reason: 'No more questions' };
     rec.qIndex += 1;
     rec.qStartedAt = rec.qStartedAt || Date.now();
-    this.onChange();
-    return { ok: true };
+    return { ok: true, privateUpdate: true };
   }
 
   buzz({ teamId, questionId }) {
@@ -506,7 +496,6 @@ class Game {
     this.onChange();
   }
 
-  /* ---- STAGE TRANSITIONS ---- */
   sendToInstructions() {
     this.session.state = 'INSTRUCTIONS';
     this.session.instructionsEndsAt = Date.now() + CFG.INSTR_SEC * 1000;
@@ -869,7 +858,7 @@ class Game {
         return true;
       }
     } else if (s.state === 'QUESTION_REVEAL') {
-      // manual mode
+      // manual
     } else if (s.state === 'INSTRUCTIONS') {
       if (s.instructionsEndsAt && n >= s.instructionsEndsAt) {
         s.state = 'LOBBY';
@@ -1047,30 +1036,52 @@ function setupSocket(io) {
       ack && ack({ ok: true, teamId: result.teamId });
     });
 
+    /* ============ TEAM: instructions ============ */
     socket.on('team:ackInstructions', () => {
       const tid = socket.data.teamId;
       if (tid) game.ackInstructions(tid);
     });
+
+    /* ============ TEAM: answer ============ */
     socket.on('team:answer', ({ questionId, answer }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      ack && ack(game.submitAnswer({ teamId: tid, questionId, answer }));
+      const result = game.submitAnswer({ teamId: tid, questionId, answer });
+      if (result && result.privateUpdate) {
+        // Selection round: only send to this socket
+        socket.emit('state', snapshot(game, 'team'));
+      } else {
+        broadcast();
+      }
+      ack && ack(result);
     });
+
+    /* ============ TEAM: selection controls ============ */
     socket.on('team:skipSelection', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      ack && ack(game.skipSelectionQuestion({ teamId: tid }));
+      const r = game.skipSelectionQuestion({ teamId: tid });
+      socket.emit('state', snapshot(game, 'team'));
+      ack && ack(r);
     });
+
     socket.on('team:selectionBack', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      ack && ack(game.selectionGoBack({ teamId: tid }));
+      const r = game.selectionGoBack({ teamId: tid });
+      socket.emit('state', snapshot(game, 'team'));
+      ack && ack(r);
     });
+
     socket.on('team:selectionForward', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      ack && ack(game.selectionForward({ teamId: tid }));
+      const r = game.selectionForward({ teamId: tid });
+      socket.emit('state', snapshot(game, 'team'));
+      ack && ack(r);
     });
+
+    /* ============ TEAM: buzz + challenge ============ */
     socket.on('team:buzz', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
@@ -1092,6 +1103,7 @@ function setupSocket(io) {
       broadcast();
     });
 
+    /* ============ ADMIN actions ============ */
     const adminGuard = (fn) => (...args) => {
       if (socket.data.role !== 'admin') return;
       fn(...args);
@@ -1179,4 +1191,4 @@ setupSocket(io);
 server.listen(CFG.PORT, () => {
   console.log('BRAINRUSH server listening on http://localhost:' + CFG.PORT);
   console.log('Admins: ' + ADMINS.map(a => a.name + ' (' + a.mobile + ')').join(', '));
-});
+}); 

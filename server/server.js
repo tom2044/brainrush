@@ -370,7 +370,7 @@ class Game {
     if (s.round === 1) this.evalR1();
     else if (s.round === 2) this.evalR2();
     s.state = 'QUESTION_REVEAL';
-    s.revealEndsAt = Date.now() + CFG.REVEAL_MS;
+    s.revealEndsAt = null;
     s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null; s.challenge = null;
     this.onChange();
   }
@@ -558,7 +558,7 @@ class Game {
         return true;
       }
     } else if (s.state === 'QUESTION_REVEAL') {
-      if (s.revealEndsAt && n >= s.revealEndsAt) { this.nextQuestion(); return true; }
+      // Manual mode — no auto-advance. Admin must click NEXT QUESTION.
     } else if (s.state === 'INSTRUCTIONS') {
       if (s.instructionsEndsAt && n >= s.instructionsEndsAt) { s.state = 'LOBBY'; return true; }
     }
@@ -627,7 +627,6 @@ function setupSocket(io) {
       available: adminSlotsAvailable()
     });
 
-    /* ---- Admin slot info ---- */
     socket.on('admin:slots:get', () => {
       socket.emit('admin:slots', {
         total: MAX_ADMIN_SLOTS,
@@ -636,7 +635,6 @@ function setupSocket(io) {
       });
     });
 
-    /* ---- Admin OTP: request ---- */
     socket.on('admin:requestOtp', ({ mobile }, ack) => {
       const admin = findAdminByMobile(String(mobile || '').trim());
       if (!admin) {
@@ -661,7 +659,6 @@ function setupSocket(io) {
       ack && ack({ ok: true, message: 'OTP sent', devOtp: otp });
     });
 
-    /* ---- Admin OTP: verify ---- */
     socket.on('admin:verifyOtp', ({ mobile, otp }, ack) => {
       const admin = findAdminByMobile(String(mobile || '').trim());
       if (!admin) return ack && ack({ ok: false, reason: 'Invalid mobile' });
@@ -693,7 +690,6 @@ function setupSocket(io) {
       ack && ack({ ok: true, token, adminId: admin.id, name: admin.name });
     });
 
-    /* ---- Admin reconnect with token ---- */
     socket.on('role:admin', ({ token } = {}) => {
       const sess = token ? adminSessions.get(token) : null;
       if (sess) {
@@ -710,13 +706,11 @@ function setupSocket(io) {
       socket.emit('state', snapshot(game, 'team'));
     });
 
-    /* ---- Team roles ---- */
     socket.on('role:team', ({ teamId } = {}) => {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
 
-        // Cancel any pending disqualification (they reconnected in time)
         if (pendingDisq.has(teamId)) {
           clearTimeout(pendingDisq.get(teamId));
           pendingDisq.delete(teamId);
@@ -733,7 +727,6 @@ function setupSocket(io) {
     });
 
     socket.on('team:register', ({ teamName, students }, ack) => {
-      // Block if this team name was previously disqualified
       const banned = game.teams.some(t =>
         t.teamName.toLowerCase() === String(teamName || '').toLowerCase() &&
         t.status === 'disqualified'
@@ -770,7 +763,6 @@ function setupSocket(io) {
       ack && ack(game.challenge({ teamId: tid, questionId }));
     });
 
-    /* ---- Immediate disqualification on visibility loss ---- */
     socket.on('team:visibilityLost', () => {
       const tid = socket.data.teamId;
       if (!tid) return;
@@ -781,7 +773,6 @@ function setupSocket(io) {
       broadcast();
     });
 
-    /* ---- Admin actions (guard) ---- */
     const adminGuard = (fn) => (...args) => {
       if (socket.data.role !== 'admin') return;
       fn(...args);
@@ -808,7 +799,6 @@ function setupSocket(io) {
     socket.on('admin:question:delete', adminGuard(({ id }) => game.deleteQuestion(id)));
     socket.on('admin:question:move',   adminGuard(({ id, direction }) => game.moveQuestion(id, direction)));
 
-    /* ---- Disconnect ---- */
     socket.on('disconnect', () => {
       const tid = socketTeam.get(socket.id);
       if (tid) {
@@ -817,11 +807,9 @@ function setupSocket(io) {
         if (t) {
           t.connected = false;
 
-          // Disqualify only if the quiz is in active play
           if (t.status === 'active' && !disqualifiedTeams.has(tid)) {
             const handle = setTimeout(() => {
               pendingDisq.delete(tid);
-              // Did they reconnect during the grace period?
               const stillThere = [...socketTeam.values()].includes(tid);
               if (stillThere) return;
               disqualifiedTeams.add(tid);

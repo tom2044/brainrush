@@ -270,8 +270,13 @@ const Admin = {
       controls = `<p class="muted mb">Question live.</p>
         <button class="btn warn block" id="forceReveal">⏭ FORCE REVEAL</button>`;
     } else if (s.state === 'QUESTION_REVEAL') {
-      controls = `<p class="muted mb">Reveal showing…</p>
-        <button class="btn primary block" id="skipReveal">⏩ NEXT QUESTION</button>`;
+      const qs = this.roundQuestions(s.round);
+      const isLastQ = s.qIndex + 1 >= qs.length;
+      controls = `
+        <p class="muted mb">Reveal showing. Click below to continue.</p>
+        <button class="btn primary block" id="skipReveal">
+          ${isLastQ ? '🏁 SHOW SCORE' : '⏩ NEXT QUESTION'}
+        </button>`;
     } else if (s.state === 'ROUND_END') {
       const next = s.round + 1;
       controls = `<p class="muted mb">Round ${s.round} complete. Survivors: <b>${s.activeTeamIds.length}</b></p>

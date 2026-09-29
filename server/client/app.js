@@ -122,10 +122,10 @@ function renderWelcome(root) {
       </div>
       <p class="tagline">
         Welcome, future <span class="accent">Mechanical Engineers</span>.<br>
-        Four rounds. Ten teams. One champion.
+        Six stages. Ten teams. One champion.
       </p>
       <div class="meta-chips">
-        <span class="chip"><span class="ico">⚙️</span> 4 ROUNDS</span>
+        <span class="chip"><span class="ico">⚙️</span> 6 STAGES</span>
         <span class="chip"><span class="ico">🏆</span> 10 TEAMS</span>
         <span class="chip"><span class="ico">⚡</span> REAL-TIME</span>
         <span class="chip"><span class="ico">🎯</span> BUZZER</span>
@@ -140,7 +140,7 @@ function renderWelcome(root) {
         </div>
         <div class="feature">
           <span class="ico">⚙️</span>
-          <div><div class="ttl">Four Rounds</div><div class="desc">Guess · Speed · Challenge · Buzzer</div></div>
+          <div><div class="ttl">Six Stages</div><div class="desc"> Selection · Guess · Speed · Challenge · Rapid · Finale</div></div>
         </div>
         <div class="feature">
           <span class="ico">🏅</span>

@@ -791,3 +791,24 @@ a{color:var(--copper-light);text-decoration:none}
   filter: grayscale(0.6);
   border-color: rgba(255, 71, 87, 0.5);
 }
+/* ============ SELECTION ROUND (SAQ) ============ */
+.saq-input {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.saq-input input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  padding: 20px;
+  letter-spacing: 1px;
+}
+.saq-input input:focus {
+  border-color: var(--acid-green);
+  box-shadow: 0 0 0 4px rgba(57, 255, 136, .16), 0 0 30px rgba(57, 255, 136, .5);
+}
+.saq-input .btn {
+  min-height: 56px;
+  font-size: 15px;
+}

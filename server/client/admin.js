@@ -101,6 +101,17 @@ const Admin = {
       .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
                    || (a.latency || 0) - (b.latency || 0));
   },
+    startSelection() {
+    Socket.emit('admin:startSelection', {}, (r) => {
+      if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot start selection'));
+    });
+  },
+  qualifySelection() {
+    Socket.emit('admin:qualifySelection', {}, (r) => {
+      if (r && r.ok) toast('✓ ' + r.qualified + ' teams qualified');
+      else if (r) toast('⚠ ' + (r.reason || 'Failed'));
+    });
+  },
 
   /* ---- Render dispatcher ---- */
   render(root) {
@@ -244,26 +255,38 @@ const Admin = {
   },
 
   /* ---- Control tab ---- */
-  renderControl(c) {
+    renderControl(c) {
     const db = this.state;
     const s = db.session;
     const approved = db.teams.filter(t => t.status === 'approved' || t.status === 'active');
-    const canStart = approved.length >= 2 &&
+    const canStartSelection = approved.length >= 2 &&
       (s.state === 'LOBBY' || s.state === 'ROUND_END' || s.state === 'FINISHED');
 
     let controls = '';
+
     if (s.state === 'LOBBY') {
       controls = `<div class="flex mb">
         <button class="btn primary" id="instr">📖 INSTRUCTIONS</button>
-        <button class="btn ${canStart ? 'good' : ''}" id="start1" ${canStart ? '' : 'disabled'}>
-          ▶ START ROUND 1 (${approved.length})</button>
+        <button class="btn ${canStartSelection ? 'good' : ''}" id="startSel" ${canStartSelection ? '' : 'disabled'}>
+          🎯 START SELECTION ROUND (${approved.length} teams)
+        </button>
       </div>`;
     } else if (s.state === 'INSTRUCTIONS') {
       controls = `<p class="muted mb">Teams reading instructions…</p>
         <div class="flex">
-          <button class="btn ${canStart ? 'good' : ''}" id="start1" ${canStart ? '' : 'disabled'}>▶ START ROUND 1</button>
+          <button class="btn ${canStartSelection ? 'good' : ''}" id="startSel" ${canStartSelection ? '' : 'disabled'}>🎯 START SELECTION ROUND</button>
           <button class="btn ghost" id="closeInstr">CLOSE</button>
         </div>`;
+    } else if (s.state === 'SELECTION') {
+      const qs = this.roundQuestions(0);
+      const timeLeft = s.selectionEndsAt ? Math.max(0, Math.ceil((s.selectionEndsAt - Date.now()) / 1000)) : 0;
+      controls = `
+        <p class="muted mb">Selection round in progress. ${qs.length} questions, ${fmtClock(timeLeft)} remaining.</p>
+        <div class="flex mb">
+          <button class="btn primary" id="nextSelQ">⏩ NEXT QUESTION</button>
+          <button class="btn good" id="qualifyNow">🏁 END &amp; QUALIFY TOP 10</button>
+        </div>
+        <p class="small muted">The round will auto-end when the 10-minute timer hits zero.</p>`;
     } else if (s.state === 'ROUND_INTRO') {
       controls = '<p class="muted">Round intro — auto-advancing…</p>';
     } else if (s.state === 'QUESTION_ACTIVE') {
@@ -278,12 +301,20 @@ const Admin = {
           ${isLastQ ? '🏁 SHOW SCORE' : '⏩ NEXT QUESTION'}
         </button>`;
     } else if (s.state === 'ROUND_END') {
-      const next = s.round + 1;
-      controls = `<p class="muted mb">Round ${s.round} complete. Survivors: <b>${s.activeTeamIds.length}</b></p>
-        <div class="flex">
-          ${next <= 4 ? `<button class="btn primary" id="startN" data-r="${next}">▶ START ROUND ${next}</button>` : ''}
-          <button class="btn bad" id="endNow">🏁 END SESSION</button>
-        </div>`;
+      if (s.round === 0) {
+        // Selection just finished — offer start of Round 1
+        const qualifiers = s.activeTeamIds.length;
+        controls = `<p class="muted mb">Selection complete. <b>${qualifiers}</b> teams qualified.</p>
+          <button class="btn primary block" id="startR1">▶ START ROUND 1 (${qualifiers} teams)</button>`;
+      } else {
+        const next = s.round + 1;
+        const remaining = s.activeTeamIds.length;
+        controls = `<p class="muted mb">Round ${s.round} complete. Survivors: <b>${remaining}</b></p>
+          <div class="flex">
+            ${next <= 5 ? `<button class="btn primary" id="startN" data-r="${next}">▶ START ROUND ${next} (${remaining} teams)</button>` : ''}
+            <button class="btn bad" id="endNow">🏁 END SESSION</button>
+          </div>`;
+      }
     } else if (s.state === 'FINISHED') {
       controls = `<p class="muted mb">Session finished.</p>
         <div class="flex">
@@ -307,7 +338,7 @@ const Admin = {
             <div class="divider"></div>
             <div class="grid three" style="gap:10px">
               <div class="stat"><span class="v">${db.answers.length}</span><span class="l">Answers</span></div>
-              <div class="stat"><span class="v">R${s.round || '-'}</span><span class="l">Round</span></div>
+              <div class="stat"><span class="v">R${s.round}</span><span class="l">Round</span></div>
               <div class="stat"><span class="v">Q${s.qIndex + 1}</span><span class="l">Index</span></div>
             </div>
           </div>
@@ -324,7 +355,10 @@ const Admin = {
 
     const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
     bind('instr',       () => this.sendToInstructions());
-    bind('start1',      () => this.startRound(1));
+    bind('startSel',    () => this.startSelection());
+    bind('nextSelQ',    () => this.nextQuestion());
+    bind('qualifyNow',  () => this.qualifySelection());
+    bind('startR1',     () => this.startRound(1));
     bind('closeInstr',  () => this.closeInstructions());
     bind('forceReveal', () => this.forceReveal());
     bind('skipReveal',  () => this.nextQuestion());
@@ -337,6 +371,7 @@ const Admin = {
     });
     this.renderLeaderboard(document.getElementById('alb'), false);
   },
+    
 
   adminQuestionHTML(q, s) {
     let body = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">${esc(q.text)}</div>`;

@@ -12,15 +12,43 @@ const { v4: uuid } = require('uuid');
    ============================================================ */
 const CFG = {
   PORT: process.env.PORT || 4000,
-  MAX_REGISTERED_TEAMS: 100,
+  MAX_REGISTERED_TEAMS: 200,
   MIN_TEAMS_TO_START: 2,
+
+  // Selection round
+  SELECTION_Q_COUNT: 10,
+  SELECTION_TOTAL_MS: 10 * 60 * 1000,      // 10 minutes total
+  SELECTION_CORRECT: 2,
+  SELECTION_WRONG: -1,
+  SELECTION_QUALIFY: 10,                    // top 10 advance
+
+  // R1 - Closest guess
   R1_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+
+  // R2 - Speed MCQ
   R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+
+  // R3 - Challenge Matrix
   R3_CORRECT: 10, R3_STEAL: 15, R3_FAIL: -5,
-  R4_CORRECT: 20, R4_WRONG: -10,
-  REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
-  INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
-  ROUND_CUTS: { 1: 2, 2: 2, 3: 4 },
+
+  // R4 - Rapid fire
+  R4_CORRECT: 10, R4_WRONG: -5,
+
+  // R5 - Grand Finale buzzer
+  R5_CORRECT: 20, R5_WRONG: -10,
+
+  // Timers
+  REVEAL_MS: 4000,
+  BUZZ_WINDOW_MS: 8000,
+  CHALLENGE_MS: 10000,
+  INSTR_SEC: 300,
+  ROUND_INTRO_MS: 3000,
+  TICK_MS: 200,
+
+  // Cuts after each round (how many to eliminate)
+  ROUND_CUTS: { 1: 2, 2: 2, 3: 2, 4: 2 },
+
+  // Disqualification
   DISQUALIFY_GRACE_MS: 3000,
 };
 
@@ -28,8 +56,8 @@ const CFG = {
    ADMIN AUTH
    ============================================================ */
 const ADMINS = [
-  { id: 'admin1', name: 'Tamal', mobile: '9695848092' },
-  { id: 'admin2', name: 'Joy',   mobile: '8293309467' },
+  { id: 'admin1', name: 'Tamal',    mobile: '9695848092' },
+  { id: 'admin2', name: 'Joy',      mobile: '8293309467' },
   { id: 'admin3', name: 'Snehasis', mobile: '9732257776' }
 ];
 const MAX_ADMIN_SLOTS = 3;
@@ -46,12 +74,8 @@ function findAdminByMobile(mobile) {
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
-function activeAdminCount() {
-  return adminSessions.size;
-}
-function adminSlotsAvailable() {
-  return Math.max(0, MAX_ADMIN_SLOTS - activeAdminCount());
-}
+function activeAdminCount() { return adminSessions.size; }
+function adminSlotsAvailable() { return Math.max(0, MAX_ADMIN_SLOTS - activeAdminCount()); }
 function pruneStaleSessions() {
   const now = Date.now();
   for (const [token, sess] of adminSessions.entries()) {
@@ -70,6 +94,27 @@ setInterval(pruneStaleSessions, 10000);
    ============================================================ */
 function seedQuestions() {
   const out = [];
+
+  /* ---- SELECTION ROUND (10 SAQ) ---- */
+  const SEL = [
+    ['Full form of CPU', 'central processing unit'],
+    ['Unit of force (SI)', 'newton'],
+    ['H2O is the chemical formula for?', 'water'],
+    ['Number of sides in a hexagon?', '6'],
+    ['Largest planet in our solar system?', 'jupiter'],
+    ['Speed of light (km/s, rounded)?', '300000'],
+    ['Chemical symbol for iron?', 'fe'],
+    ['Square root of 144?', '12'],
+    ['First man on the moon (last name)?', 'armstrong'],
+    ['Boiling point of water at sea level in °C?', '100']
+  ];
+  SEL.forEach(([t, a], i) => out.push({
+    id: 'selq' + (i + 1), roundNumber: 0, order: i + 1, type: 'saq',
+    text: t, correctAnswer: String(a).toLowerCase().trim(),
+    unit: '', points: 2, timeLimitSec: 0, isActive: true
+  }));
+
+  /* ---- R1: Closest Guess (6 numeric) ---- */
   const R1 = [
     ['Height of the Statue of Unity (m)', 182, 'm'],
     ['Year the first iPhone was released', 2007, ''],
@@ -82,6 +127,8 @@ function seedQuestions() {
     id: 'r1q' + (i + 1), roundNumber: 1, order: i + 1, type: 'closest_guess',
     text: t, correctAnswer: a, unit: u, points: 10, timeLimitSec: 45, isActive: true
   }));
+
+  /* ---- R2: Speed MCQ (10) ---- */
   const R2 = [
     ['Capital of Australia?', ['Sydney', 'Canberra', 'Melbourne', 'Perth'], 1],
     ['Which planet is the Red Planet?', ['Venus', 'Mars', 'Jupiter', 'Mercury'], 1],
@@ -98,6 +145,8 @@ function seedQuestions() {
     id: 'r2q' + (i + 1), roundNumber: 2, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 20, isActive: true
   }));
+
+  /* ---- R3: Challenge Matrix (18) ---- */
   const R3 = [
     ['Largest planet?', ['Saturn', 'Jupiter', 'Neptune', 'Earth'], 1],
     ['Longest river in the world?', ['Amazon', 'Yangtze', 'Nile', 'Mississippi'], 2],
@@ -122,9 +171,11 @@ function seedQuestions() {
     id: 'r3q' + (i + 1), roundNumber: 3, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
   }));
+
+  /* ---- R4: Rapid-Fire MCQ (10) ---- */
   const R4 = [
-    ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
-    ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
+    ['2 + 2 x 2 = ?', ['4', '6', '8', '10'], 1],
+    ['Capital of India?', ['Mumbai', 'Delhi', 'Kolkata', 'Chennai'], 1],
     ['Largest mammal?', ['Elephant', 'Blue whale', 'Giraffe', 'Hippo'], 1],
     ['9 x 9 = ?', ['72', '79', '81', '89'], 2],
     ['Largest country by area?', ['Canada', 'China', 'USA', 'Russia'], 3],
@@ -136,8 +187,27 @@ function seedQuestions() {
   ];
   R4.forEach(([t, o, a], i) => out.push({
     id: 'r4q' + (i + 1), roundNumber: 4, order: i + 1, type: 'mcq',
+    text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 15, isActive: true
+  }));
+
+  /* ---- R5: Grand Finale Buzzer (10) ---- */
+  const R5 = [
+    ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
+    ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
+    ['Largest ocean?', ['Atlantic', 'Indian', 'Arctic', 'Pacific'], 3],
+    ['Square root of 169?', ['11', '12', '13', '14'], 2],
+    ['Author of "Origin of Species"?', ['Newton', 'Darwin', 'Einstein', 'Hawking'], 1],
+    ['Chemical symbol for silver?', ['Si', 'Ag', 'Au', 'Al'], 1],
+    ['Number of players in a cricket team?', ['9', '10', '11', '12'], 2],
+    ['Smallest continent?', ['Europe', 'Australia', 'Antarctica', 'South America'], 1],
+    ['Largest internal organ in human body?', ['Heart', 'Liver', 'Lungs', 'Kidney'], 1],
+    ['Value of pi (2 decimal places)?', ['3.12', '3.14', '3.16', '3.18'], 1]
+  ];
+  R5.forEach(([t, o, a], i) => out.push({
+    id: 'r5q' + (i + 1), roundNumber: 5, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 20, timeLimitSec: 15, isActive: true
   }));
+
   return out;
 }
 
@@ -152,15 +222,28 @@ class Game {
     this.teams = [];
     this.answers = [];
   }
+
   blankSession() {
     return {
-      state: 'LOBBY', round: 0, qIndex: 0, currentQuestionId: null,
-      activeTeamIds: [], activeTeamId: null,
-      questionStartedAt: null, questionEndsAt: null, revealEndsAt: null,
-      buzzerLockedByTeamId: null, buzzerLockEndsAt: null,
-      challenge: null, lastReveal: null, instructionsEndsAt: null
+      state: 'LOBBY',            // LOBBY | INSTRUCTIONS | SELECTION | ROUND_INTRO |
+                                  // QUESTION_ACTIVE | QUESTION_REVEAL | ROUND_END | FINISHED
+      round: 0,                  // 0 = selection, 1..5 = rounds
+      qIndex: 0,
+      currentQuestionId: null,
+      activeTeamIds: [],
+      activeTeamId: null,
+      questionStartedAt: null,
+      questionEndsAt: null,
+      revealEndsAt: null,
+      selectionEndsAt: null,      // selection round global timer
+      buzzerLockedByTeamId: null,
+      buzzerLockEndsAt: null,
+      challenge: null,
+      lastReveal: null,
+      instructionsEndsAt: null
     };
   }
+
   roundQuestions(r) {
     return this.questions.filter(q => q.roundNumber === r && q.isActive)
       .sort((a, b) => a.order - b.order);
@@ -169,22 +252,35 @@ class Game {
     return this.roundQuestions(this.session.round)[this.session.qIndex] || null;
   }
   team(id) { return this.teams.find(t => t.id === id) || null; }
+
   leaderboard(ids) {
     const list = ids || this.session.activeTeamIds;
     return this.teams.filter(t => list.includes(t.id)).slice()
       .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
                    || (a.latency || 0) - (b.latency || 0));
   }
+
+  /* ---- Selection leaderboard: by score desc, then time asc ---- */
+  selectionLeaderboard() {
+    return this.teams
+      .filter(t => t.status === 'active' || t.status === 'approved')
+      .slice()
+      .sort((a, b) => (b.points.total || 0) - (a.points.total || 0)
+                   || (a.latency || 0) - (b.latency || 0));
+  }
+
   addPoints(teamId, round, pts) {
     const t = this.team(teamId);
     if (!t) return;
     t.points['r' + round] = (t.points['r' + round] || 0) + pts;
     t.points.total = (t.points.total || 0) + pts;
   }
+
   allAnswered(q) {
     return this.session.activeTeamIds.every(tid =>
       this.answers.some(a => a.questionId === q.id && a.teamId === tid));
   }
+
   registerTeam({ teamName, students }) {
     if (!teamName || !Array.isArray(students) || students.length !== 2)
       return { ok: false, reason: 'Invalid team data' };
@@ -194,7 +290,7 @@ class Game {
       return { ok: false, reason: 'Registration full' };
     const team = {
       id: uuid(), teamName, students, status: 'registered',
-      points: { r1: 0, r2: 0, r3: 0, r4: 0, total: 0 },
+      points: { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 },
       latency: 0, eliminatedInRound: null, finalRank: null,
       instructionsAck: false, joinedAt: Date.now(), connected: true
     };
@@ -202,10 +298,13 @@ class Game {
     this.onChange();
     return { ok: true, teamId: team.id };
   }
+
   ackInstructions(teamId) {
     const t = this.team(teamId);
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
+
+  /* ---- SUBMIT ANSWER ---- */
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
     if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
@@ -214,13 +313,17 @@ class Game {
     if (!s.activeTeamIds.includes(teamId)) return { ok: false, reason: 'Not in play' };
     if (this.answers.some(a => a.questionId === questionId && a.teamId === teamId))
       return { ok: false, reason: 'Already answered' };
+
+    // R3 turn enforcement
     if (s.round === 3) {
       if (s.challenge && s.challenge.questionId === questionId) {
         if (teamId !== s.challenge.challengerId) return { ok: false, reason: 'Not your turn' };
       } else if (teamId !== s.activeTeamId) return { ok: false, reason: 'Not your turn' };
     }
-    if (s.round === 4 && s.buzzerLockedByTeamId !== teamId)
+    // R5 buzzer enforcement
+    if (s.round === 5 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
+
     const receivedAt = Date.now();
     const rec = {
       id: uuid(), questionId, teamId, roundNumber: s.round,
@@ -233,15 +336,28 @@ class Game {
     this.answers.push(rec);
     const t = this.team(teamId);
     if (t) t.latency += rec.latencyMs;
-    if (s.round === 3) this.evalR3Single(rec, q);
-    else if (s.round === 4) this.evalR4Single(rec, q);
-    else if (this.allAnswered(q)) this.finishQuestion();
-    else this.onChange();
+
+    if (s.round === 0) this.evalSelectionSingle(rec, q);
+    else if (s.round === 1) {
+      if (this.allAnswered(q)) this.finishQuestion();
+      else this.onChange();
+    }
+    else if (s.round === 2) {
+      if (this.allAnswered(q)) this.finishQuestion();
+      else this.onChange();
+    }
+    else if (s.round === 3) this.evalR3Single(rec, q);
+    else if (s.round === 4) {
+      if (this.allAnswered(q)) this.finishQuestion();
+      else this.onChange();
+    }
+    else if (s.round === 5) this.evalR5Single(rec, q);
     return { ok: true };
   }
+
   buzz({ teamId, questionId }) {
     const s = this.session;
-    if (s.round !== 4 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
+    if (s.round !== 5 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
     const q = this.currentQuestion();
     if (!q || q.id !== questionId) return { ok: false };
     if (!s.activeTeamIds.includes(teamId)) return { ok: false };
@@ -254,6 +370,7 @@ class Game {
     this.onChange();
     return { ok: true };
   }
+
   challenge({ teamId, questionId }) {
     const s = this.session;
     if (s.round !== 3 || s.state !== 'QUESTION_ACTIVE') return { ok: false };
@@ -267,6 +384,7 @@ class Game {
     this.onChange();
     return { ok: true };
   }
+
   approveTeam(teamId, yes) {
     const t = this.team(teamId);
     if (!t) return;
@@ -318,66 +436,154 @@ class Game {
     }
     this.onChange();
   }
+
+  /* ---- STAGE TRANSITIONS ---- */
   sendToInstructions() {
     this.session.state = 'INSTRUCTIONS';
     this.session.instructionsEndsAt = Date.now() + CFG.INSTR_SEC * 1000;
     this.onChange();
   }
   closeInstructions() { this.session.state = 'LOBBY'; this.onChange(); }
-  startRound(n) {
+
+  /* Start the selection round */
+  startSelection() {
     const s = this.session;
     const approved = this.teams.filter(t => t.status === 'approved' || t.status === 'active');
     if (approved.length < CFG.MIN_TEAMS_TO_START)
       return { ok: false, reason: 'Need at least ' + CFG.MIN_TEAMS_TO_START + ' approved teams' };
-    s.round = n; s.qIndex = 0; s.state = 'ROUND_INTRO';
+
+    s.round = 0;
+    s.qIndex = 0;
+    s.state = 'SELECTION';
     s.activeTeamIds = approved.map(t => t.id);
-    s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
-    s.lastReveal = null; s.challenge = null;
-    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null;
+    s.activeTeamId = null;
+    s.lastReveal = null;
+    s.challenge = null;
+    s.buzzerLockedByTeamId = null;
+    s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
-    approved.forEach(t => { t.status = 'active'; });
+    s.selectionEndsAt = Date.now() + CFG.SELECTION_TOTAL_MS;
+
+    // reset per-round points
+    approved.forEach(t => {
+      t.status = 'active';
+      t.points.r0 = 0;
+      // don't reset total — keep manual adjustments
+    });
+
     this.onChange();
+    return { ok: true };
+  }
+
+  /* Qualify top 10 → begin Round 1 */
+  qualifyFromSelection() {
+    const s = this.session;
+    const lb = this.selectionLeaderboard();
+    const qualifiers = lb.slice(0, CFG.SELECTION_QUALIFY);
+    const eliminated = lb.slice(CFG.SELECTION_QUALIFY);
+
+    eliminated.forEach(t => {
+      t.status = 'eliminated';
+      t.eliminatedInRound = 0;
+    });
+
+    s.state = 'ROUND_END';
+    s.round = 0;
+    s.activeTeamIds = qualifiers.map(t => t.id);
+    this.onChange();
+    return { ok: true, qualified: qualifiers.length };
+  }
+
+  /* Start a specific round (1..5). Assumes activeTeamIds already set. */
+  startRound(n) {
+    const s = this.session;
+    const active = this.teams.filter(t => s.activeTeamIds.includes(t.id));
+    if (active.length < CFG.MIN_TEAMS_TO_START)
+      return { ok: false, reason: 'Not enough active teams' };
+
+    s.round = n;
+    s.qIndex = 0;
+    s.state = 'ROUND_INTRO';
+    s.lastReveal = null;
+    s.challenge = null;
+    s.buzzerLockedByTeamId = null;
+    s.buzzerLockEndsAt = null;
+    s.currentQuestionId = null;
+    s.selectionEndsAt = null;
+
+    // For R3 (challenge matrix), assign first turn
+    s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
+
+    active.forEach(t => { if (t.status === 'approved') t.status = 'active'; });
+
+    this.onChange();
+
     setTimeout(() => {
       if (this.session.state === 'ROUND_INTRO' && this.session.round === n) this.showQuestion();
     }, CFG.ROUND_INTRO_MS);
     return { ok: true };
   }
+
   showQuestion() {
     const s = this.session;
     const q = this.currentQuestion();
     if (!q) return this.endRound();
+
     s.state = 'QUESTION_ACTIVE';
     s.currentQuestionId = q.id;
     s.questionStartedAt = Date.now();
-    s.questionEndsAt = Date.now() + q.timeLimitSec * 1000;
-    s.revealEndsAt = null; s.lastReveal = null; s.challenge = null;
-    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null;
+    s.questionEndsAt = q.timeLimitSec ? Date.now() + q.timeLimitSec * 1000 : null;
+    s.revealEndsAt = null;
+    s.lastReveal = null;
+    s.challenge = null;
+    s.buzzerLockedByTeamId = null;
+    s.buzzerLockEndsAt = null;
     this.onChange();
   }
+
+  /* Advance to next question OR finish the round */
   nextQuestion() {
     const s = this.session;
+
+    // Selection round: skip to next question without waiting for everyone
+    if (s.round === 0) {
+      const qs = this.roundQuestions(0);
+      if (s.qIndex + 1 >= qs.length) return this.qualifyFromSelection();
+      s.qIndex += 1;
+      s.currentQuestionId = qs[s.qIndex].id;
+      s.questionStartedAt = Date.now();
+      this.onChange();
+      return;
+    }
+
     const qs = this.roundQuestions(s.round);
     if (s.qIndex + 1 >= qs.length) return this.endRound();
     s.qIndex += 1;
+
     if (s.round === 3 && s.activeTeamIds.length) {
       const idx = s.activeTeamIds.indexOf(s.activeTeamId);
       s.activeTeamId = s.activeTeamIds[(idx + 1) % s.activeTeamIds.length];
     }
     this.showQuestion();
   }
+
   finishQuestion() {
     const s = this.session;
     if (s.round === 1) this.evalR1();
     else if (s.round === 2) this.evalR2();
+    else if (s.round === 4) this.evalR4();
     s.state = 'QUESTION_REVEAL';
     s.revealEndsAt = null;
-    s.buzzerLockedByTeamId = null; s.buzzerLockEndsAt = null; s.challenge = null;
+    s.buzzerLockedByTeamId = null;
+    s.buzzerLockEndsAt = null;
+    s.challenge = null;
     this.onChange();
   }
+
   endRound() {
     const s = this.session;
     s.state = 'ROUND_END';
-    if (s.round < 4) {
+    if (s.round >= 1 && s.round <= 4) {
       const cut = CFG.ROUND_CUTS[s.round] || 0;
       const lb = this.leaderboard();
       if (cut > 0 && lb.length > cut) {
@@ -386,35 +592,60 @@ class Game {
         eliminated.forEach(t => { t.status = 'eliminated'; t.eliminatedInRound = s.round; });
         s.activeTeamIds = survivors.map(t => t.id);
       }
-    } else {
+    } else if (s.round === 5) {
       const lb = this.leaderboard();
       lb.forEach((t, i) => { t.status = 'winner'; t.finalRank = i + 1; });
       s.state = 'FINISHED';
     }
     this.onChange();
   }
+
   endSession() {
     const lb = this.leaderboard(this.teams.filter(t => t.status !== 'registered').map(t => t.id));
     lb.forEach((t, i) => { t.status = 'winner'; t.finalRank = i + 1; });
     this.session.state = 'FINISHED';
     this.onChange();
   }
+
   resetSession() {
     this.session = this.blankSession();
     this.answers = [];
     this.teams.forEach(t => {
-      t.points = { r1: 0, r2: 0, r3: 0, r4: 0, total: 0 };
-      t.latency = 0; t.eliminatedInRound = null; t.finalRank = null;
+      t.points = { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
+      t.latency = 0;
+      t.eliminatedInRound = null;
+      t.finalRank = null;
       if (t.status !== 'registered') t.status = 'approved';
     });
     this.onChange();
   }
+
   clearAll() {
     this.session = this.blankSession();
-    this.teams = []; this.answers = [];
+    this.teams = [];
+    this.answers = [];
     this.questions = seedQuestions();
     this.onChange();
   }
+
+  /* ---- SELECTION scoring ---- */
+  evalSelectionSingle(rec, q) {
+    const norm = String(rec.rawAnswer == null ? '' : rec.rawAnswer).toLowerCase().trim();
+    const ok = norm === q.correctAnswer;
+    rec.isCorrect = ok;
+
+    if (ok) {
+      const sec = rec.latencyMs / 1000;
+      const speedBonus = Math.max(0, Math.floor((10 - sec) / 2));
+      rec.pointsAwarded = CFG.SELECTION_CORRECT + speedBonus;
+    } else {
+      rec.pointsAwarded = CFG.SELECTION_WRONG;
+    }
+    this.addPoints(rec.teamId, 0, rec.pointsAwarded);
+    this.onChange();
+  }
+
+  /* ---- R1 ---- */
   evalR1() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -434,6 +665,8 @@ class Game {
       note: 'CLOSEST GUESS'
     };
   }
+
+  /* ---- R2 ---- */
   evalR2() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -450,6 +683,8 @@ class Game {
       note: 'FASTEST FINGER'
     };
   }
+
+  /* ---- R3 ---- */
   evalR3Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
@@ -472,11 +707,32 @@ class Game {
     }
     this.finishQuestion();
   }
-  evalR4Single(rec, q) {
+
+  /* ---- R4 ---- */
+  evalR4() {
+    const q = this.currentQuestion();
+    const answers = this.answers.filter(a => a.questionId === q.id);
+    answers.forEach(a => {
+      const ok = a.rawAnswer === q.correctAnswer;
+      a.isCorrect = ok;
+      a.pointsAwarded = ok ? CFG.R4_CORRECT : CFG.R4_WRONG;
+      this.addPoints(a.teamId, 4, a.pointsAwarded);
+    });
+    this.session.lastReveal = {
+      questionId: q.id, correctAnswer: q.correctAnswer,
+      results: answers.map(a => ({
+        teamId: a.teamId, correct: a.isCorrect, points: a.pointsAwarded
+      })),
+      note: 'RAPID FIRE'
+    };
+  }
+
+  /* ---- R5 ---- */
+  evalR5Single(rec, q) {
     const ok = rec.rawAnswer === q.correctAnswer;
     rec.isCorrect = ok;
-    rec.pointsAwarded = ok ? CFG.R4_CORRECT : CFG.R4_WRONG;
-    this.addPoints(rec.teamId, 4, rec.pointsAwarded);
+    rec.pointsAwarded = ok ? CFG.R5_CORRECT : CFG.R5_WRONG;
+    this.addPoints(rec.teamId, 5, rec.pointsAwarded);
     this.session.lastReveal = {
       questionId: q.id, correctAnswer: q.correctAnswer,
       results: [{ teamId: rec.teamId, correct: ok, points: rec.pointsAwarded, buzzer: true }],
@@ -484,6 +740,8 @@ class Game {
     };
     this.finishQuestion();
   }
+
+  /* ---- ADMIN question CRUD ---- */
   addQuestion(o) {
     const rq = this.roundQuestions(o.roundNumber);
     const order = rq.length ? Math.max(...rq.map(q => q.order)) + 1 : 1;
@@ -525,23 +783,37 @@ class Game {
     rq[swap].order = tmp;
     this.onChange();
   }
+
+  /* ---- TICK ---- */
   tick() {
     const s = this.session;
     const n = Date.now();
+
+    /* Selection round global timer */
+    if (s.state === 'SELECTION') {
+      if (s.selectionEndsAt && n >= s.selectionEndsAt) {
+        return this.qualifyFromSelection() ? true : false;
+      }
+      return false;
+    }
+
     if (s.state === 'QUESTION_ACTIVE') {
       const q = this.currentQuestion();
       if (!q) return false;
-      if (s.round === 4 && s.buzzerLockedByTeamId && s.buzzerLockEndsAt && n >= s.buzzerLockEndsAt) {
+
+      /* R5 buzzer timeout */
+      if (s.round === 5 && s.buzzerLockedByTeamId && s.buzzerLockEndsAt && n >= s.buzzerLockEndsAt) {
         const lockedId = s.buzzerLockedByTeamId;
-        this.addPoints(lockedId, 4, CFG.R4_WRONG);
+        this.addPoints(lockedId, 5, CFG.R5_WRONG);
         s.lastReveal = {
           questionId: q.id, correctAnswer: q.correctAnswer,
-          results: [{ teamId: lockedId, correct: false, points: CFG.R4_WRONG, timeout: true }],
+          results: [{ teamId: lockedId, correct: false, points: CFG.R5_WRONG, timeout: true }],
           note: 'BUZZER TIMEOUT'
         };
         this.finishQuestion();
         return true;
       }
+      /* R3 challenge timeout */
       if (s.round === 3 && s.challenge && n >= s.challenge.endsAt) {
         const cid = s.challenge.challengerId;
         this.addPoints(cid, 3, CFG.R3_FAIL);
@@ -553,14 +825,18 @@ class Game {
         this.finishQuestion();
         return true;
       }
+      /* Question timer */
       if (s.questionEndsAt && n >= s.questionEndsAt) {
         this.finishQuestion();
         return true;
       }
     } else if (s.state === 'QUESTION_REVEAL') {
-      // Manual mode — no auto-advance. Admin must click NEXT QUESTION.
+      // Manual mode — admin advances
     } else if (s.state === 'INSTRUCTIONS') {
-      if (s.instructionsEndsAt && n >= s.instructionsEndsAt) { s.state = 'LOBBY'; return true; }
+      if (s.instructionsEndsAt && n >= s.instructionsEndsAt) {
+        s.state = 'LOBBY';
+        return true;
+      }
     }
     return false;
   }
@@ -571,7 +847,7 @@ class Game {
    ============================================================ */
 function sanitizeForTeam(db) {
   const out = JSON.parse(JSON.stringify(db));
-  if (out.session.state === 'QUESTION_ACTIVE') {
+  if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
     const cq = out.session.currentQuestionId;
     out.questions = out.questions.map(q => {
       if (q.id === cq) {
@@ -584,6 +860,7 @@ function sanitizeForTeam(db) {
   }
   return out;
 }
+
 function snapshot(game, role) {
   const db = {
     session: game.session, questions: game.questions,
@@ -637,16 +914,13 @@ function setupSocket(io) {
 
     socket.on('admin:requestOtp', ({ mobile }, ack) => {
       const admin = findAdminByMobile(String(mobile || '').trim());
-      if (!admin) {
-        return ack && ack({ ok: false, reason: 'Mobile number not registered as admin' });
-      }
+      if (!admin) return ack && ack({ ok: false, reason: 'Mobile number not registered as admin' });
       const existingToken = adminByMobile.get(admin.mobile);
-      if (existingToken && adminSessions.has(existingToken)) {
+      if (existingToken && adminSessions.has(existingToken))
         return ack && ack({ ok: false, reason: 'This admin is already logged in' });
-      }
-      if (adminSlotsAvailable() <= 0) {
-        return ack && ack({ ok: false, reason: 'All admin slots are in use. Try again later.' });
-      }
+      if (adminSlotsAvailable() <= 0)
+        return ack && ack({ ok: false, reason: 'All admin slots are in use.' });
+
       const otp = generateOtp();
       otpStore.set(admin.mobile, { otp, expiresAt: Date.now() + OTP_TTL_MS });
       console.log('\n╔══════════════════════════════════════╗');
@@ -668,18 +942,15 @@ function setupSocket(io) {
         otpStore.delete(admin.mobile);
         return ack && ack({ ok: false, reason: 'OTP expired' });
       }
-      if (entry.otp !== String(otp || '').trim()) {
+      if (entry.otp !== String(otp || '').trim())
         return ack && ack({ ok: false, reason: 'Wrong OTP' });
-      }
       if (adminSlotsAvailable() <= 0) {
         otpStore.delete(admin.mobile);
         return ack && ack({ ok: false, reason: 'All admin slots are now in use' });
       }
       otpStore.delete(admin.mobile);
       const token = uuid();
-      adminSessions.set(token, {
-        adminId: admin.id, socketId: socket.id, lastSeen: Date.now()
-      });
+      adminSessions.set(token, { adminId: admin.id, socketId: socket.id, lastSeen: Date.now() });
       adminByMobile.set(admin.mobile, token);
       socket.join('admin');
       socket.data.role = 'admin';
@@ -710,12 +981,10 @@ function setupSocket(io) {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
-
         if (pendingDisq.has(teamId)) {
           clearTimeout(pendingDisq.get(teamId));
           pendingDisq.delete(teamId);
         }
-
         t.connected = true;
         socketTeam.set(socket.id, teamId);
         socket.data.teamId = teamId;
@@ -731,9 +1000,7 @@ function setupSocket(io) {
         t.teamName.toLowerCase() === String(teamName || '').toLowerCase() &&
         t.status === 'disqualified'
       );
-      if (banned) {
-        return ack && ack({ ok: false, reason: 'This team was disqualified' });
-      }
+      if (banned) return ack && ack({ ok: false, reason: 'This team was disqualified' });
       const result = game.registerTeam({ teamName, students });
       if (!result.ok) return ack && ack(result);
       socketTeam.set(socket.id, result.teamId);
@@ -785,6 +1052,14 @@ function setupSocket(io) {
     }));
     socket.on('admin:sendToInstructions', adminGuard(() => game.sendToInstructions()));
     socket.on('admin:closeInstructions',  adminGuard(() => game.closeInstructions()));
+    socket.on('admin:startSelection',     adminGuard((_, ack) => {
+      const r = game.startSelection();
+      ack && ack(r);
+    }));
+    socket.on('admin:qualifySelection',   adminGuard((_, ack) => {
+      const r = game.qualifyFromSelection();
+      ack && ack(r);
+    }));
     socket.on('admin:startRound',         adminGuard(({ round }, ack) => {
       const r = game.startRound(round);
       ack && ack(r);
@@ -806,7 +1081,6 @@ function setupSocket(io) {
         const t = game.team(tid);
         if (t) {
           t.connected = false;
-
           if (t.status === 'active' && !disqualifiedTeams.has(tid)) {
             const handle = setTimeout(() => {
               pendingDisq.delete(tid);
@@ -820,7 +1094,6 @@ function setupSocket(io) {
         }
         broadcast();
       }
-
       const adminToken = socket.data.adminToken;
       if (adminToken && adminSessions.has(adminToken)) {
         const sess = adminSessions.get(adminToken);

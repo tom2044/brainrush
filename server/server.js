@@ -270,7 +270,6 @@ class Game {
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
 
-  /* ---- SUBMIT (handles selection specially) ---- */
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
 
@@ -317,7 +316,6 @@ class Game {
       rec.qIndex += 1;
       rec.qStartedAt = Date.now();
 
-      // Do NOT broadcast — socket handler will send a private update
       return { ok: true, privateUpdate: true };
     }
 
@@ -365,7 +363,6 @@ class Game {
     return { ok: true };
   }
 
-  /* ---- SELECTION: skip ---- */
   skipSelectionQuestion({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -390,7 +387,6 @@ class Game {
     return { ok: true, privateUpdate: true };
   }
 
-  /* ---- SELECTION: back ---- */
   selectionGoBack({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -401,7 +397,6 @@ class Game {
     return { ok: true, privateUpdate: true };
   }
 
-  /* ---- SELECTION: forward ---- */
   selectionForward({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -858,7 +853,7 @@ class Game {
         return true;
       }
     } else if (s.state === 'QUESTION_REVEAL') {
-      // manual
+      // manual mode
     } else if (s.state === 'INSTRUCTIONS') {
       if (s.instructionsEndsAt && n >= s.instructionsEndsAt) {
         s.state = 'LOBBY';
@@ -887,12 +882,36 @@ function sanitizeForTeam(db) {
   }
   return out;
 }
+
+function sanitizeForProjector(db) {
+  const out = JSON.parse(JSON.stringify(db));
+
+  if (out.session.state === 'SELECTION') {
+    out.questions = out.questions.filter(q => q.roundNumber !== 0);
+    delete out.session.selectionAnswers;
+  }
+
+  if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
+    const cq = out.session.currentQuestionId;
+    out.questions = out.questions.map(q => {
+      if (q.id === cq) {
+        const copy = { ...q };
+        delete copy.correctAnswer;
+        return copy;
+      }
+      return q;
+    });
+  }
+  return out;
+}
+
 function snapshot(game, role) {
   const db = {
     session: game.session, questions: game.questions,
     teams: game.teams, answers: game.answers
   };
   if (role === 'admin') return db;
+  if (role === 'projector') return sanitizeForProjector(db);
   return sanitizeForTeam(db);
 }
 
@@ -908,6 +927,7 @@ function setupSocket(io) {
 
   function broadcast() {
     io.to('admin').emit('state', snapshot(game, 'admin'));
+    io.to('projector').emit('state', snapshot(game, 'projector'));
     for (const [socketId] of socketTeam.entries()) {
       const s = io.sockets.sockets.get(socketId);
       if (s) s.emit('state', snapshot(game, 'team'));
@@ -1003,6 +1023,19 @@ function setupSocket(io) {
       socket.emit('state', snapshot(game, 'team'));
     });
 
+    /* ---- Projector role (admin token required) ---- */
+    socket.on('role:projector', ({ token } = {}) => {
+      const sess = token ? adminSessions.get(token) : null;
+      if (!sess) {
+        socket.emit('projector:denied');
+        return;
+      }
+      socket.data.role = 'projector';
+      socket.data.adminToken = token;
+      socket.join('projector');
+      socket.emit('state', snapshot(game, 'projector'));
+    });
+
     socket.on('role:team', ({ teamId } = {}) => {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
@@ -1036,19 +1069,16 @@ function setupSocket(io) {
       ack && ack({ ok: true, teamId: result.teamId });
     });
 
-    /* ============ TEAM: instructions ============ */
     socket.on('team:ackInstructions', () => {
       const tid = socket.data.teamId;
       if (tid) game.ackInstructions(tid);
     });
 
-    /* ============ TEAM: answer ============ */
     socket.on('team:answer', ({ questionId, answer }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
       const result = game.submitAnswer({ teamId: tid, questionId, answer });
       if (result && result.privateUpdate) {
-        // Selection round: only send to this socket
         socket.emit('state', snapshot(game, 'team'));
       } else {
         broadcast();
@@ -1056,7 +1086,6 @@ function setupSocket(io) {
       ack && ack(result);
     });
 
-    /* ============ TEAM: selection controls ============ */
     socket.on('team:skipSelection', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
@@ -1081,7 +1110,6 @@ function setupSocket(io) {
       ack && ack(r);
     });
 
-    /* ============ TEAM: buzz + challenge ============ */
     socket.on('team:buzz', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
@@ -1103,7 +1131,6 @@ function setupSocket(io) {
       broadcast();
     });
 
-    /* ============ ADMIN actions ============ */
     const adminGuard = (fn) => (...args) => {
       if (socket.data.role !== 'admin') return;
       fn(...args);
@@ -1179,6 +1206,9 @@ app.use(cors());
 const clientDir = path.join(__dirname, 'client');
 app.use(express.static(clientDir));
 app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+app.get('/projector', (req, res) => {
+  res.sendFile(path.join(clientDir, 'projector.html'));
+});
 app.get('*', (req, res) => res.sendFile(path.join(clientDir, 'index.html')));
 
 const server = http.createServer(app);
@@ -1191,4 +1221,4 @@ setupSocket(io);
 server.listen(CFG.PORT, () => {
   console.log('BRAINRUSH server listening on http://localhost:' + CFG.PORT);
   console.log('Admins: ' + ADMINS.map(a => a.name + ' (' + a.mobile + ')').join(', '));
-}); 
+});

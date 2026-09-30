@@ -334,10 +334,15 @@ const Admin = {
               <div class="stat"><span class="v">Q${s.qIndex + 1}</span><span class="l">Index</span></div>
             </div>
           </div>
-          <div class="card">
-            <h3>DANGER ZONE</h3>
-            <button class="btn bad block sm" id="clearAll">🗑 CLEAR ALL</button>
-          </div>
+          <div class="card mb">
+  <h3>PROJECTOR</h3>
+  <button class="btn primary block sm" id="openProjector">🖥 OPEN PROJECTOR</button>
+  <p class="small muted" style="margin-top:8px">Opens audience display in a new tab.</p>
+</div>
+<div class="card">
+  <h3>DANGER ZONE</h3>
+  <button class="btn bad block sm" id="clearAll">🗑 CLEAR ALL</button>
+</div>
         </div>
         <div>
           <div class="card mb"><h3>CURRENT QUESTION</h3>${q ? this.adminQuestionHTML(q, s) : '<p class="muted">No active question.</p>'}</div>
@@ -357,6 +362,12 @@ const Admin = {
     bind('reset',       () => this.resetSession());
     bind('backLobby',   () => this.backLobby());
     bind('clearAll',    () => this.clearAll());
+
+    const projBtn = document.getElementById('openProjector');
+if (projBtn) projBtn.onclick = () => {
+  if (!this.token) return toast('⚠ Not logged in');
+  window.open('/projector?token=' + encodeURIComponent(this.token), '_blank');
+};
     document.querySelectorAll('#ac [data-r]').forEach(el => {
       el.onclick = () => this.startRound(+el.dataset.r);
     });

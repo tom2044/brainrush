@@ -253,6 +253,8 @@ const Team = {
   },
 
   renderLogin(root) {
+    // If the form is already on screen, don't touch it
+  if (document.getElementById('tn')) return;
     root.innerHTML = `
       <div class="reg-screen">
         <div class="reg-card">
@@ -286,6 +288,10 @@ const Team = {
   },
 
   wait(c, me, msg) {
+    // Don't rebuild if we're already showing this exact message
+  const h = c.querySelector('.wait-screen h2');
+  if (h && h.textContent === msg) return;
+  
     c.innerHTML = `<div class="wait-screen">
       <div class="wait-icon">⏳</div>
       <h2>${esc(msg)}</h2>

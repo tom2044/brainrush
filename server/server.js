@@ -437,11 +437,38 @@ class Game {
     return { ok: true };
   }
 
-  approveTeam(teamId, yes) {
+    approveTeam(teamId, yes) {
     const t = this.team(teamId);
     if (!t) return;
     if (yes && t.status === 'disqualified') return;
-    t.status = yes ? 'approved' : 'registered';
+
+    const s = this.session;
+
+    if (yes) {
+      // If the selection round is running, add them with their own 10 minutes
+      if (s.state === 'SELECTION') {
+        t.status = 'active';
+        if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
+        const startAt = Date.now();
+        s.selectionAnswers[teamId] = {
+          qIndex: 0,
+          answers: {},
+          qStartedAt: startAt,
+          endsAt: startAt + CFG.SELECTION_TOTAL_MS,
+          finished: false
+        };
+        t.points.r0 = 0;
+      } else {
+        t.status = 'approved';
+      }
+    } else {
+      t.status = 'registered';
+      if (s.state === 'SELECTION') {
+        delete s.selectionAnswers[teamId];
+        s.activeTeamIds = s.activeTeamIds.filter(id => id !== teamId);
+      }
+    }
+
     this.onChange();
   }
   approveAll() {

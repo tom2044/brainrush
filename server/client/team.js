@@ -40,6 +40,14 @@ const Team = {
   _sameForTeam(a, b) {
     if (!a || !b) return false;
     const sa = a.session, sb = b.session;
+
+    this.loadTeamId();
+
+    if (!this.teamId) {
+      if (sa.state !== sb.state) return false;
+      return true;
+    }
+
     if (sa.state !== sb.state) return false;
     if (sa.round !== sb.round) return false;
     if (sa.qIndex !== sb.qIndex) return false;
@@ -74,25 +82,37 @@ const Team = {
   },
 
   _saveInput() {
-    const el = document.activeElement;
-    if (!el || !el.tagName) return null;
-    if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return null;
-    if (!el.id) return null;
-    return {
-      id: el.id,
-      value: el.value,
-      selStart: el.selectionStart,
-      selEnd: el.selectionEnd
-    };
+    const regFields = ['tn', 's1n', 's1r', 's2n', 's2r'];
+    const regValues = {};
+    let anyReg = false;
+    regFields.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { regValues[id] = el.value; anyReg = true; }
+    });
+    const focused = document.activeElement;
+    const activeInfo = (focused && focused.tagName === 'INPUT' && focused.id) ? {
+      id: focused.id,
+      selStart: focused.selectionStart,
+      selEnd: focused.selectionEnd
+    } : null;
+    return { regValues: anyReg ? regValues : null, active: activeInfo };
   },
 
   _restoreInput(saved) {
     if (!saved) return;
-    const el = document.getElementById(saved.id);
-    if (!el) return;
-    el.value = saved.value;
-    try { el.setSelectionRange(saved.selStart, saved.selEnd); } catch (e) {}
-    el.focus();
+    if (saved.regValues) {
+      Object.keys(saved.regValues).forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.value) el.value = saved.regValues[id];
+      });
+    }
+    if (saved.active) {
+      const el = document.getElementById(saved.active.id);
+      if (el) {
+        try { el.setSelectionRange(saved.active.selStart, saved.active.selEnd); } catch (e) {}
+        el.focus();
+      }
+    }
   },
 
   bindVisibility() {
@@ -105,12 +125,10 @@ const Team = {
 
     setTimeout(() => {
       try { sessionStorage.removeItem('brainrush:refreshing'); } catch (e) {}
-    }, 3000);
+    }, 500);
 
     const report = () => {
-      try {
-        if (sessionStorage.getItem('brainrush:refreshing')) return;
-      } catch (e) {}
+      try { if (sessionStorage.getItem('brainrush:refreshing')) return; } catch (e) {}
       if (!this.state) return;
       const s = this.state.session;
       const me = this.myTeam();
@@ -124,7 +142,6 @@ const Team = {
     });
   },
 
-  /* ---- Actions ---- */
   register(teamName, students) {
     Socket.emit('team:register', { teamName, students }, (r) => {
       if (!r || !r.ok) { toast('⚠ ' + ((r && r.reason) || 'Registration failed')); return; }
@@ -150,7 +167,6 @@ const Team = {
     });
   },
 
-  /* ---- Helpers ---- */
   myTeam() {
     if (!this.state) return null;
     this.loadTeamId();
@@ -176,7 +192,6 @@ const Team = {
     }
   },
 
-  /* ---- Render ---- */
   render(root) {
     if (!this.state) {
       root.innerHTML = `<div class="wait-screen">
@@ -253,19 +268,19 @@ const Team = {
   },
 
   renderLogin(root) {
-    // If the form is already on screen, don't touch it
-  if (document.getElementById('tn')) return;
+    if (document.getElementById('tn')) return;
+
     root.innerHTML = `
       <div class="reg-screen">
         <div class="reg-card">
           <h2>TEAM REGISTRATION</h2>
           <p class="subtitle">Two students share one device.</p>
-          <div class="field"><label>TEAM NAME</label><input id="tn" placeholder="e.g. Quantum Quokkas" maxlength="40" autocomplete="off"></div>
+          <div class="field"><label>TEAM NAME</label><input id="tn" placeholder="e.g. Quantum Quokkas" maxlength="40" autocomplete="off" autocapitalize="characters"></div>
           <div class="divider"></div>
-          <div class="field"><label>STUDENT 1 · NAME</label><input id="s1n" autocomplete="off"></div>
+          <div class="field"><label>STUDENT 1 · NAME</label><input id="s1n" autocomplete="off" autocapitalize="characters"></div>
           <div class="field"><label>STUDENT 1 · ROLL</label><input id="s1r" inputmode="numeric" autocomplete="off"></div>
           <div class="divider"></div>
-          <div class="field"><label>STUDENT 2 · NAME</label><input id="s2n" autocomplete="off"></div>
+          <div class="field"><label>STUDENT 2 · NAME</label><input id="s2n" autocomplete="off" autocapitalize="characters"></div>
           <div class="field"><label>STUDENT 2 · ROLL</label><input id="s2r" inputmode="numeric" autocomplete="off"></div>
           <button class="btn primary block mt" id="reg">REGISTER TEAM →</button>
         </div>
@@ -288,10 +303,9 @@ const Team = {
   },
 
   wait(c, me, msg) {
-    // Don't rebuild if we're already showing this exact message
-  const h = c.querySelector('.wait-screen h2');
-  if (h && h.textContent === msg) return;
-  
+    const existing = c.querySelector('.wait-screen h2');
+    if (existing && existing.textContent === msg) return;
+
     c.innerHTML = `<div class="wait-screen">
       <div class="wait-icon">⏳</div>
       <h2>${esc(msg)}</h2>
@@ -306,12 +320,12 @@ const Team = {
       <h2>📖 INSTRUCTIONS</h2>
       <p class="muted">Read carefully before entering the arena.</p>
       <ul>
-        <li><b>Selection Round:</b> 10 short answers in 10 minutes. +2 correct, −1 wrong, speed bonus.</li>
-        <li><b>Round 1 — Closest Guess:</b> 10 teams. Numeric guesses, closest wins.</li>
-        <li><b>Round 2 — Speed &amp; Accuracy:</b> 8 teams. Fastest correct MCQs.</li>
-        <li><b>Round 3 — Challenge Matrix:</b> 6 teams. Steal with Challenge.</li>
-        <li><b>Round 4 — Bonus Rapid-Fire:</b> 4 teams. Quick-fire MCQs.</li>
-        <li><b>Round 5 — Grand Finale:</b> 2 teams. Buzzer round.</li>
+        <li><b>Selection Round:</b> 10 short answers. 10 minutes from when you start. +2 correct, −1 wrong, 0 skip. Tie-break by total time.</li>
+        <li><b>Round 1 — Closest Guess:</b> Exact answer = +10, off by 1 = +9, off by 2 = +8, and so on.</li>
+        <li><b>Round 2 — Speed &amp; Accuracy:</b> Fastest correct = +10, next = +8, then +6, +5, +4, +3, +2, +1.</li>
+        <li><b>Round 3 — Challenge Matrix:</b> Turn-based. Correct = +10, steal = +15, failed steal = −5.</li>
+        <li><b>Round 4 — Bonus Rapid-Fire:</b> 10 seconds per question. +10 correct, −5 wrong.</li>
+        <li><b>Round 5 — Grand Finale:</b> Buzzer round. +20 correct, −10 wrong.</li>
         <li>⚠️ <b>Do not minimize or switch tabs</b> during active rounds — you'll be disqualified.</li>
         <li>✅ If you face a problem, <b>refresh the page</b> — it's safe.</li>
       </ul>
@@ -327,20 +341,23 @@ const Team = {
     if (cb && !me.instructionsAck) cb.onchange = () => { if (cb.checked) Team.ackInstructions(); };
   },
 
+  /* ---- SELECTION ROUND ---- */
   selection(c, me, s) {
+    // Selection questions are pre-ordered per team by the server
     const allQ = this.state.questions
-      .filter(x => x.roundNumber === 0 && x.isActive)
-      .sort((a, b) => a.order - b.order);
+      .filter(x => x.roundNumber === 0 && x.isActive);
 
     const rec = (s.selectionAnswers || {})[me.id] || { qIndex: 0, answers: {} };
     const totalQ = allQ.length;
-    const timeLeft = s.selectionEndsAt ? Math.max(0, (s.selectionEndsAt - now()) / 1000) : 0;
+    const timeLeft = rec.endsAt ? Math.max(0, (rec.endsAt - now()) / 1000) : 600;
+    const isExpired = timeLeft <= 0;
 
     const q = allQ[rec.qIndex];
     const done = !q;
 
-    const locked = !done && rec.answers[q.id] != null;
-    const lockedData = locked ? rec.answers[q.id] : null;
+    // Can re-visit and edit only if not submitted
+    const curAnswer = q ? rec.answers[q.id] : null;
+    const isLocked = curAnswer && curAnswer.locked;
 
     const isLast = !done && (rec.qIndex + 1 >= totalQ);
     const canPrev = rec.qIndex > 0;
@@ -356,28 +373,33 @@ const Team = {
         </div>
         <div class="timer-bar"><div id="selBar" style="width:${(timeLeft / 600) * 100}%;background:linear-gradient(90deg,var(--acid-green),#39ff88)"></div></div>
 
-        ${done ? `
+        ${isExpired ? `
+          <div class="result-banner bad" style="font-size:18px">
+            ⏱ Your 10 minutes are up
+          </div>
+          <p class="muted center mt">Waiting for admin to end the round…</p>
+        ` : (done ? `
           <div class="result-banner good" style="font-size:18px">
             ✓ All questions answered!
           </div>
-          <p class="muted center mt">Waiting for other teams / admin to end the round…</p>
+          <p class="muted center mt">Waiting for admin to end the round…</p>
         ` : `
           <div class="qtext-big">${esc(q.text)}</div>
 
-          ${locked ? `
+          ${isLocked ? `
             <div class="result-banner neutral">
-              🔒 Answer locked: <b>${esc(lockedData.raw === '__skip__' ? '(skipped)' : String(lockedData.raw))}</b>
+              🔒 Answer locked: <b>${esc(curAnswer.raw === '__skip__' ? '(skipped)' : String(curAnswer.raw))}</b>
             </div>
           ` : `
             <div class="saq-input">
-              <input id="saqAnswer" type="text" placeholder="Type your answer…" autocomplete="off" maxlength="60" autocapitalize="off" spellcheck="false">
+              <input id="saqAnswer" type="text" placeholder="TYPE YOUR ANSWER…" autocomplete="off" maxlength="60" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase">
             </div>
           `}
 
           <div class="flex mt" style="gap:10px">
             <button class="btn ghost" id="saqPrev" style="flex:1" ${canPrev ? '' : 'disabled'}>← PREVIOUS</button>
 
-            ${locked ? `
+            ${isLocked ? `
               <button class="btn primary" id="saqNext" style="flex:2">
                 ${isLast ? 'FINISH ✓' : 'NEXT →'}
               </button>
@@ -388,7 +410,7 @@ const Team = {
               </button>
             `}
           </div>
-        `}
+        `)}
 
         <div class="card mt">
           <h3>YOUR SCORE</h3>
@@ -399,16 +421,30 @@ const Team = {
         </div>
       </div>`;
 
-    if (!done) {
+    if (!done && !isExpired) {
       const input = document.getElementById('saqAnswer');
       const subBtn = document.getElementById('saqSubmit');
       const skipBtn = document.getElementById('saqSkip');
       const prevBtn = document.getElementById('saqPrev');
       const nextBtn = document.getElementById('saqNext');
 
+      // Force uppercase as user types
+      if (input) {
+        input.addEventListener('input', () => {
+          const start = input.selectionStart;
+          const end = input.selectionEnd;
+          input.value = input.value.toUpperCase();
+          try { input.setSelectionRange(start, end); } catch (e) {}
+        });
+        // Pre-fill if there was a previous unsaved answer (skip doesn't lock)
+        if (curAnswer && !curAnswer.locked && curAnswer.raw && curAnswer.raw !== '__skip__') {
+          input.value = String(curAnswer.raw).toUpperCase();
+        }
+      }
+
       if (subBtn) {
         subBtn.onclick = () => {
-          const v = input.value.trim();
+          const v = input.value.trim().toUpperCase();
           if (!v) return toast('⚠ Type an answer or press SKIP');
           Team.submitAnswer(q.id, v);
         };
@@ -443,13 +479,16 @@ const Team = {
     if (this.timerHandle) clearInterval(this.timerHandle);
     const tEl = document.getElementById('selTimer');
     const bEl = document.getElementById('selBar');
-    if (tEl && bEl && s.selectionEndsAt) {
-      const endsAt = s.selectionEndsAt;
+    if (tEl && bEl && rec.endsAt) {
+      const endsAt = rec.endsAt;
       const tick = () => {
         const left = Math.max(0, (endsAt - now()) / 1000);
         tEl.textContent = fmtClock(left);
         bEl.style.width = (left / 600 * 100) + '%';
-        if (left <= 0) clearInterval(this.timerHandle);
+        if (left <= 0) {
+          clearInterval(this.timerHandle);
+          if (this.state) this.setState(this.state);
+        }
       };
       this.timerHandle = setInterval(tick, 200);
     }
@@ -460,7 +499,7 @@ const Team = {
       1: 'Numeric guesses. Closest to the real answer wins points.',
       2: 'MCQs. Fastest correct answers score highest.',
       3: 'Turn-based MCQs. Challenge to steal.',
-      4: 'Quick-fire MCQs. +10 correct, −5 wrong.',
+      4: 'Quick-fire MCQs. 10 seconds each. +10 correct, −5 wrong.',
       5: 'Buzzer finale. First to buzz, first to score.'
     };
     const names = {

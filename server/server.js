@@ -16,21 +16,32 @@ const CFG = {
   MIN_TEAMS_TO_START: 2,
 
   SELECTION_Q_COUNT: 10,
-  SELECTION_TOTAL_MS: 10 * 60 * 1000,
+  SELECTION_TOTAL_MS: 10 * 60 * 1000,     // 10 min per team
   SELECTION_CORRECT: 2,
   SELECTION_WRONG: -1,
   SELECTION_QUALIFY: 10,
 
-  R1_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+  // R1 — exact +0 = +10, off by 1 = +9 ... off by 9+ = +1
+  R1_SCALE: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+
+  // R2 — speed MCQ
   R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
+
+  // R3 — challenge matrix
   R3_CORRECT: 10, R3_STEAL: 15, R3_FAIL: -5,
+
+  // R4 — rapid fire
   R4_CORRECT: 10, R4_WRONG: -5,
+
+  // R5 — grand finale
   R5_CORRECT: 20, R5_WRONG: -10,
 
   REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
   INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
+
   ROUND_CUTS: { 1: 2, 2: 2, 3: 2, 4: 2 },
-  DISQUALIFY_GRACE_MS: 15000,
+
+  DISQUALIFY_GRACE_MS: 2000,
 };
 
 /* ============================================================
@@ -43,7 +54,7 @@ const ADMINS = [
 ];
 const MAX_ADMIN_SLOTS = 3;
 const OTP_TTL_MS = 5 * 60 * 1000;
-const SESSION_GRACE_MS = 30 * 1000;
+const SESSION_GRACE_MS = 5 * 60 * 1000;
 
 const otpStore = new Map();
 const adminSessions = new Map();
@@ -70,6 +81,19 @@ function pruneStaleSessions() {
 }
 setInterval(pruneStaleSessions, 10000);
 
+/* ---- helpers ---- */
+function normalizeAnswer(s) {
+  return String(s == null ? '' : s).toUpperCase().trim();
+}
+function shuffleArr(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /* ============================================================
    QUESTIONS
    ============================================================ */
@@ -77,20 +101,20 @@ function seedQuestions() {
   const out = [];
 
   const SEL = [
-    ['Full form of CPU', 'central processing unit'],
-    ['Unit of force (SI)', 'newton'],
-    ['H2O is the chemical formula for?', 'water'],
+    ['Full form of CPU', 'CENTRAL PROCESSING UNIT'],
+    ['Unit of force (SI)', 'NEWTON'],
+    ['H2O is the chemical formula for?', 'WATER'],
     ['Number of sides in a hexagon?', '6'],
-    ['Largest planet in our solar system?', 'jupiter'],
+    ['Largest planet in our solar system?', 'JUPITER'],
     ['Speed of light (km/s, rounded)?', '300000'],
-    ['Chemical symbol for iron?', 'fe'],
+    ['Chemical symbol for iron?', 'FE'],
     ['Square root of 144?', '12'],
-    ['First man on the moon (last name)?', 'armstrong'],
+    ['First man on the moon (last name)?', 'ARMSTRONG'],
     ['Boiling point of water at sea level in °C?', '100']
   ];
   SEL.forEach(([t, a], i) => out.push({
     id: 'selq' + (i + 1), roundNumber: 0, order: i + 1, type: 'saq',
-    text: t, correctAnswer: String(a).toLowerCase().trim(),
+    text: t, correctAnswer: normalizeAnswer(a),
     unit: '', points: 2, timeLimitSec: 0, isActive: true
   }));
 
@@ -163,7 +187,7 @@ function seedQuestions() {
   ];
   R4.forEach(([t, o, a], i) => out.push({
     id: 'r4q' + (i + 1), roundNumber: 4, order: i + 1, type: 'mcq',
-    text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 15, isActive: true
+    text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 10, isActive: true
   }));
 
   const R5 = [
@@ -184,6 +208,26 @@ function seedQuestions() {
   }));
 
   return out;
+}
+
+/* ============================================================
+   SHUFFLE HELPERS
+   ============================================================ */
+// Apply per-round option shuffle for MCQ rounds (2,3,4,5) — same shuffle for all teams
+function shuffledOptionsMap(questions, round) {
+  const map = {};
+  if (round === 0 || round === 1) return map;
+  questions
+    .filter(q => q.roundNumber === round && q.isActive && q.type === 'mcq')
+    .forEach(q => {
+      const idx = [0, 1, 2, 3];
+      const shuf = shuffleArr(idx);
+      map[q.id] = {
+        order: shuf,                          // shuf[newIdx] = oldIdx
+        correctAnswer: shuf.indexOf(q.correctAnswer)   // new correct index
+      };
+    });
+  return map;
 }
 
 /* ============================================================
@@ -209,13 +253,14 @@ class Game {
       questionStartedAt: null,
       questionEndsAt: null,
       revealEndsAt: null,
-      selectionEndsAt: null,
       selectionAnswers: {},
       buzzerLockedByTeamId: null,
       buzzerLockEndsAt: null,
       challenge: null,
       lastReveal: null,
-      instructionsEndsAt: null
+      instructionsEndsAt: null,
+      optionShuffle: {},        // questionId -> { order, correctAnswer }
+      selectionOrder: {},       // teamId -> [qIds in shuffled order]
     };
   }
 
@@ -270,32 +315,49 @@ class Game {
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
 
+  /* ---- SUBMIT ANSWER ---- */
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
 
-    /* === SELECTION ROUND === */
+    /* ===== SELECTION ROUND ===== */
     if (s.state === 'SELECTION') {
-      const rec = s.selectionAnswers[teamId];
-      if (!rec) return { ok: false, reason: 'Not in selection' };
-      const qs = this.roundQuestions(0);
-      const myQ = qs[rec.qIndex];
-      if (!myQ || myQ.id !== questionId) return { ok: false, reason: 'Stale question' };
-      if (rec.answers[questionId] != null) return { ok: false, reason: 'Already answered' };
+      let rec = s.selectionAnswers[teamId];
 
-      const answeredAt = Date.now();
-      const norm = String(answer == null ? '' : answer).toLowerCase().trim();
-      const ok = norm === myQ.correctAnswer;
-
-      let pts = 0;
-      if (ok) {
-        const sec = (answeredAt - (rec.qStartedAt || answeredAt)) / 1000;
-        const speedBonus = Math.max(0, Math.floor((10 - sec) / 2));
-        pts = CFG.SELECTION_CORRECT + speedBonus;
-      } else {
-        pts = CFG.SELECTION_WRONG;
+      // Auto-add if approved but not yet in round
+      if (!rec) {
+        const t0 = this.team(teamId);
+        if (t0 && (t0.status === 'active' || t0.status === 'approved')) {
+          this._addToSelection(teamId);
+          rec = s.selectionAnswers[teamId];
+        } else {
+          return { ok: false, reason: 'Not in selection' };
+        }
       }
 
-      rec.answers[questionId] = { raw: answer, isCorrect: ok, pts, at: answeredAt, locked: true };
+      // Time's up?
+      if (rec.endsAt && Date.now() > rec.endsAt) {
+        return { ok: false, reason: 'Your 10 minutes are up' };
+      }
+
+      // Locked already?
+      if (rec.answers[questionId] != null) {
+        return { ok: false, reason: 'Already answered' };
+      }
+
+      // Is this one of MY shuffled questions?
+      const myOrder = s.selectionOrder[teamId] || [];
+      const myQ = this.questions.find(q => q.id === questionId);
+      if (!myQ || myOrder.indexOf(questionId) === -1) {
+        return { ok: false, reason: 'Not your question' };
+      }
+
+      const answeredAt = Date.now();
+      const norm = normalizeAnswer(answer);
+      const ok = norm === myQ.correctAnswer;
+
+      const pts = ok ? CFG.SELECTION_CORRECT : CFG.SELECTION_WRONG;
+
+      rec.answers[questionId] = { raw: norm, isCorrect: ok, pts, at: answeredAt, locked: true };
 
       const t = this.team(teamId);
       if (t) {
@@ -306,18 +368,16 @@ class Game {
 
       this.answers.push({
         id: uuid(), questionId, teamId, roundNumber: 0,
-        rawAnswer: answer, receivedAt: answeredAt,
+        rawAnswer: norm, receivedAt: answeredAt,
         latencyMs: answeredAt - (rec.qStartedAt || answeredAt),
         isCorrect: ok, pointsAwarded: pts,
         wasChallenge: false, guessDelta: null, wasSkip: false
       });
 
-      rec.qIndex += 1;
-      rec.qStartedAt = Date.now();
       return { ok: true, privateUpdate: true };
     }
 
-    /* === Normal rounds (1–5) === */
+    /* ===== OTHER ROUNDS (1–5) ===== */
     if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
     const q = this.currentQuestion();
     if (!q || q.id !== questionId) return { ok: false, reason: 'Stale question' };
@@ -333,10 +393,18 @@ class Game {
     if (s.round === 5 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
 
+    // Un-shuffle the answer for MCQ rounds 2–5
+    let submittedAnswer = answer;
+    if (q.type === 'mcq' && s.optionShuffle[q.id]) {
+      const shuf = s.optionShuffle[q.id];
+      // team sends the index in THEIR shuffled view (which = server's shuffled view since options shuffle is same for all)
+      submittedAnswer = shuf.order[answer];   // map back to original index
+    }
+
     const receivedAt = Date.now();
     const rec = {
       id: uuid(), questionId, teamId, roundNumber: s.round,
-      rawAnswer: answer, receivedAt,
+      rawAnswer: submittedAnswer, receivedAt,
       latencyMs: receivedAt - (s.questionStartedAt || receivedAt),
       isCorrect: false, pointsAwarded: 0,
       wasChallenge: !!(s.challenge && s.challenge.challengerId === teamId),
@@ -361,25 +429,59 @@ class Game {
     return { ok: true };
   }
 
+  /* Add a team to the currently running selection round */
+  _addToSelection(teamId) {
+    const s = this.session;
+    if (s.state !== 'SELECTION') return;
+    if (s.selectionAnswers[teamId]) return;
+
+    const t = this.team(teamId);
+    if (!t) return;
+    t.status = 'active';
+    t.points.r0 = 0;
+
+    // Per-team shuffled question order
+    const baseOrder = this.roundQuestions(0).map(q => q.id);
+    const myOrder = shuffleArr(baseOrder);
+    s.selectionOrder[teamId] = myOrder;
+
+    const startAt = Date.now();
+    s.selectionAnswers[teamId] = {
+      qIndex: 0,
+      answers: {},
+      qStartedAt: startAt,
+      endsAt: startAt + CFG.SELECTION_TOTAL_MS,
+      finished: false
+    };
+
+    if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
+  }
+
+  /* ---- SELECTION: SKIP (doesn't lock answer permanently — just moves on) ---- */
   skipSelectionQuestion({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
-    const rec = s.selectionAnswers[teamId];
-    if (!rec) return { ok: false, reason: 'Not in selection' };
-    const qs = this.roundQuestions(0);
-    const myQ = qs[rec.qIndex];
-    if (!myQ) return { ok: false, reason: 'No more questions' };
-    if (rec.answers[myQ.id] != null) return { ok: false, reason: 'Already answered' };
+    let rec = s.selectionAnswers[teamId];
+    if (!rec) {
+      const t0 = this.team(teamId);
+      if (t0 && (t0.status === 'active' || t0.status === 'approved')) {
+        this._addToSelection(teamId);
+        rec = s.selectionAnswers[teamId];
+      } else {
+        return { ok: false, reason: 'Not in selection' };
+      }
+    }
+    if (rec.endsAt && Date.now() > rec.endsAt) {
+      return { ok: false, reason: 'Your 10 minutes are up' };
+    }
+    const order = s.selectionOrder[teamId] || [];
+    const qid = order[rec.qIndex];
+    if (!qid) return { ok: false, reason: 'No more questions' };
 
-    const now = Date.now();
-    rec.answers[myQ.id] = { raw: '__skip__', isCorrect: false, pts: 0, at: now, locked: true };
-    this.answers.push({
-      id: uuid(), questionId: myQ.id, teamId, roundNumber: 0,
-      rawAnswer: '__skip__', receivedAt: now,
-      latencyMs: now - (rec.qStartedAt || now),
-      isCorrect: false, pointsAwarded: 0,
-      wasChallenge: false, guessDelta: null, wasSkip: true
-    });
+    // Skip only marks it as "seen but not answered" — 0 points, no lock on re-entry
+    if (rec.answers[qid] == null) {
+      rec.answers[qid] = { raw: '__skip__', isCorrect: false, pts: 0, at: Date.now(), locked: false, skipped: true };
+    }
     rec.qIndex += 1;
     rec.qStartedAt = Date.now();
     return { ok: true, privateUpdate: true };
@@ -400,8 +502,8 @@ class Game {
     if (s.state !== 'SELECTION') return { ok: false };
     const rec = s.selectionAnswers[teamId];
     if (!rec) return { ok: false, reason: 'Not in selection' };
-    const qs = this.roundQuestions(0);
-    if (rec.qIndex + 1 > qs.length) return { ok: false, reason: 'No more questions' };
+    const order = s.selectionOrder[teamId] || [];
+    if (rec.qIndex + 1 > order.length) return { ok: false, reason: 'No more questions' };
     rec.qIndex += 1;
     rec.qStartedAt = rec.qStartedAt || Date.now();
     return { ok: true, privateUpdate: true };
@@ -437,7 +539,7 @@ class Game {
     return { ok: true };
   }
 
-    approveTeam(teamId, yes) {
+  approveTeam(teamId, yes) {
     const t = this.team(teamId);
     if (!t) return;
     if (yes && t.status === 'disqualified') return;
@@ -445,19 +547,8 @@ class Game {
     const s = this.session;
 
     if (yes) {
-      // If the selection round is running, add them with their own 10 minutes
       if (s.state === 'SELECTION') {
-        t.status = 'active';
-        if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
-        const startAt = Date.now();
-        s.selectionAnswers[teamId] = {
-          qIndex: 0,
-          answers: {},
-          qStartedAt: startAt,
-          endsAt: startAt + CFG.SELECTION_TOTAL_MS,
-          finished: false
-        };
-        t.points.r0 = 0;
+        this._addToSelection(teamId);
       } else {
         t.status = 'approved';
       }
@@ -465,16 +556,19 @@ class Game {
       t.status = 'registered';
       if (s.state === 'SELECTION') {
         delete s.selectionAnswers[teamId];
+        delete s.selectionOrder[teamId];
         s.activeTeamIds = s.activeTeamIds.filter(id => id !== teamId);
       }
     }
+    this.onChange();
+  }
 
-    this.onChange();
-  }
   approveAll() {
-    this.teams.forEach(t => { if (t.status === 'registered') t.status = 'approved'; });
-    this.onChange();
+    this.teams.forEach(t => {
+      if (t.status === 'registered') this.approveTeam(t.id, true);
+    });
   }
+
   deleteTeam(teamId) {
     const idx = this.teams.findIndex(t => t.id === teamId);
     if (idx === -1) return { ok: false, reason: 'Team not found' };
@@ -482,6 +576,8 @@ class Game {
     this.teams.splice(idx, 1);
     this.answers = this.answers.filter(a => a.teamId !== teamId);
     this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
+    delete this.session.selectionAnswers[teamId];
+    delete this.session.selectionOrder[teamId];
     if (this.session.activeTeamId === teamId) {
       this.session.activeTeamId = this.session.activeTeamIds[0] || null;
     }
@@ -532,20 +628,20 @@ class Game {
     s.round = 0;
     s.qIndex = 0;
     s.state = 'SELECTION';
-    s.activeTeamIds = approved.map(t => t.id);
+    s.activeTeamIds = [];
     s.activeTeamId = null;
     s.lastReveal = null;
     s.challenge = null;
     s.buzzerLockedByTeamId = null;
     s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
-    s.selectionEndsAt = Date.now() + CFG.SELECTION_TOTAL_MS;
     s.selectionAnswers = {};
+    s.selectionOrder = {};
 
     approved.forEach(t => {
       t.status = 'active';
       t.points.r0 = 0;
-      s.selectionAnswers[t.id] = { qIndex: 0, answers: {}, qStartedAt: Date.now() };
+      this._addToSelection(t.id);
     });
 
     this.onChange();
@@ -554,18 +650,26 @@ class Game {
 
   qualifyFromSelection() {
     const s = this.session;
-    const ranked = this.teams
-      .filter(t => t.status === 'active')
+
+    // Eligible = active + answered ≥ 1 question
+    const eligible = this.teams
+      .filter(t => {
+        if (t.status !== 'active') return false;
+        const rec = s.selectionAnswers[t.id];
+        if (!rec) return false;
+        return Object.keys(rec.answers || {}).length > 0;
+      })
       .slice()
       .sort((a, b) => (b.points.r0 || 0) - (a.points.r0 || 0)
                    || (a.latency || 0) - (b.latency || 0));
 
-    const qualifiers = ranked.slice(0, CFG.SELECTION_QUALIFY);
-    const eliminated = ranked.slice(CFG.SELECTION_QUALIFY);
+    const qualifiers = eligible.slice(0, CFG.SELECTION_QUALIFY);
 
-    eliminated.forEach(t => {
-      t.status = 'eliminated';
-      t.eliminatedInRound = 0;
+    this.teams.forEach(t => {
+      if (t.status === 'active' && !qualifiers.includes(t)) {
+        t.status = 'eliminated';
+        t.eliminatedInRound = 0;
+      }
     });
 
     s.state = 'ROUND_END';
@@ -581,6 +685,14 @@ class Game {
     if (active.length < CFG.MIN_TEAMS_TO_START)
       return { ok: false, reason: 'Not enough active teams' };
 
+    // Reset every team's total to 0 — R1 starts fresh
+    if (n === 1) {
+      this.teams.forEach(t => {
+        t.points = { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
+        t.latency = 0;
+      });
+    }
+
     s.round = n;
     s.qIndex = 0;
     s.state = 'ROUND_INTRO';
@@ -589,8 +701,10 @@ class Game {
     s.buzzerLockedByTeamId = null;
     s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
-    s.selectionEndsAt = null;
     s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
+
+    // Shuffle options for MCQ rounds (2,3,4,5) — same for all teams
+    s.optionShuffle = shuffledOptionsMap(this.questions, n);
 
     active.forEach(t => { if (t.status === 'approved') t.status = 'active'; });
 
@@ -696,7 +810,7 @@ class Game {
     this.onChange();
   }
 
-  /* CLEAR ALL — wipes teams + answers, KEEPS questions */
+  /* CLEAR ALL — teams + answers, keeps questions */
   clearAll() {
     this.session = this.blankSession();
     this.teams = [];
@@ -704,6 +818,7 @@ class Game {
     this.onChange();
   }
 
+  /* ---- EVALUATORS ---- */
   evalR1() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -714,7 +829,8 @@ class Game {
     scored.forEach((x, i) => {
       x.a.guessDelta = x.delta;
       x.a.isCorrect = x.delta === 0;
-      x.a.pointsAwarded = CFG.R1_SCALE[i] != null ? CFG.R1_SCALE[i] : 1;
+      const idx = Math.min(i, CFG.R1_SCALE.length - 1);
+      x.a.pointsAwarded = CFG.R1_SCALE[idx];
       this.addPoints(x.a.teamId, 1, x.a.pointsAwarded);
     });
     this.session.lastReveal = {
@@ -731,7 +847,8 @@ class Game {
       .sort((a, b) => a.receivedAt - b.receivedAt);
     correct.forEach((a, i) => {
       a.isCorrect = true;
-      a.pointsAwarded = CFG.R2_SCALE[i] != null ? CFG.R2_SCALE[i] : 1;
+      const idx = Math.min(i, CFG.R2_SCALE.length - 1);
+      a.pointsAwarded = CFG.R2_SCALE[idx];
       this.addPoints(a.teamId, 2, a.pointsAwarded);
     });
     this.session.lastReveal = {
@@ -800,7 +917,8 @@ class Game {
       id: uuid(), roundNumber: o.roundNumber, order,
       type: o.type, text: o.text,
       options: o.type === 'mcq' ? o.options : undefined,
-      correctAnswer: o.correctAnswer, unit: o.unit || '',
+      correctAnswer: o.type === 'saq' ? normalizeAnswer(o.correctAnswer) : o.correctAnswer,
+      unit: o.unit || '',
       points: o.points || 10, timeLimitSec: o.timeLimitSec || 30,
       isActive: true, editedAt: null
     };
@@ -811,6 +929,9 @@ class Game {
   editQuestion(id, patch) {
     const q = this.questions.find(x => x.id === id);
     if (!q) return;
+    if (q.type === 'saq' && patch.correctAnswer != null) {
+      patch.correctAnswer = normalizeAnswer(patch.correctAnswer);
+    }
     Object.assign(q, patch, { editedAt: Date.now() });
     this.onChange();
   }
@@ -840,11 +961,7 @@ class Game {
     const n = Date.now();
 
     if (s.state === 'SELECTION') {
-      if (s.selectionEndsAt && n >= s.selectionEndsAt) {
-        this.qualifyFromSelection();
-        return true;
-      }
-      return false;
+      return false;   // admin ends manually
     }
 
     if (s.state === 'QUESTION_ACTIVE') {
@@ -877,8 +994,6 @@ class Game {
         this.finishQuestion();
         return true;
       }
-    } else if (s.state === 'QUESTION_REVEAL') {
-      // manual mode
     } else if (s.state === 'INSTRUCTIONS') {
       if (s.instructionsEndsAt && n >= s.instructionsEndsAt) {
         s.state = 'LOBBY';
@@ -892,8 +1007,22 @@ class Game {
 /* ============================================================
    SANITIZE
    ============================================================ */
-function sanitizeForTeam(db) {
-  const out = JSON.parse(JSON.stringify(db));
+function applyOptionShuffle(q, shuffleEntry) {
+  if (!shuffleEntry || !q.options) return q;
+  const copy = { ...q };
+  copy.options = shuffleEntry.order.map(oldIdx => q.options[oldIdx]);
+  copy.correctAnswer = shuffleEntry.correctAnswer;
+  return copy;
+}
+
+function sanitizeForTeam(game, teamId) {
+  const s = game.session;
+  const out = JSON.parse(JSON.stringify({
+    session: s, questions: game.questions,
+    teams: game.teams, answers: game.answers
+  }));
+
+  // Hide correct answer during live question
   if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
     const cq = out.session.currentQuestionId;
     out.questions = out.questions.map(q => {
@@ -905,14 +1034,34 @@ function sanitizeForTeam(db) {
       return q;
     });
   }
+
+  // Apply option shuffle to all MCQ rounds
+  out.questions = out.questions.map(q => applyOptionShuffle(q, s.optionShuffle[q.id]));
+
+  // Apply per-team shuffle to Selection questions
+  if (s.state === 'SELECTION') {
+    const myOrder = s.selectionOrder[teamId] || [];
+    // Reorder round-0 questions to my order
+    const selQs = out.questions.filter(q => q.roundNumber === 0);
+    const myQs = myOrder.map(id => selQs.find(q => q.id === id)).filter(Boolean);
+    const others = out.questions.filter(q => q.roundNumber !== 0);
+    out.questions = [...myQs, ...others];
+  }
+
   return out;
 }
 
-function sanitizeForProjector(db) {
-  const out = JSON.parse(JSON.stringify(db));
+function sanitizeForProjector(game) {
+  const s = game.session;
+  const out = JSON.parse(JSON.stringify({
+    session: s, questions: game.questions,
+    teams: game.teams, answers: game.answers
+  }));
+
   if (out.session.state === 'SELECTION') {
     out.questions = out.questions.filter(q => q.roundNumber !== 0);
     delete out.session.selectionAnswers;
+    delete out.session.selectionOrder;
   }
   if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
     const cq = out.session.currentQuestionId;
@@ -928,14 +1077,11 @@ function sanitizeForProjector(db) {
   return out;
 }
 
-function snapshot(game, role) {
-  const db = {
+function snapshotAdmin(game) {
+  return {
     session: game.session, questions: game.questions,
     teams: game.teams, answers: game.answers
   };
-  if (role === 'admin') return db;
-  if (role === 'projector') return sanitizeForProjector(db);
-  return sanitizeForTeam(db);
 }
 
 /* ============================================================
@@ -949,11 +1095,13 @@ function setupSocket(io) {
   const disqualifiedTeams = new Set();
 
   function broadcast() {
-    io.to('admin').emit('state', snapshot(game, 'admin'));
-    io.to('projector').emit('state', snapshot(game, 'projector'));
-    for (const [socketId] of socketTeam.entries()) {
-      const s = io.sockets.sockets.get(socketId);
-      if (s) s.emit('state', snapshot(game, 'team'));
+    io.to('admin').emit('state', snapshotAdmin(game));
+    io.to('projector').emit('state', sanitizeForProjector(game));
+
+    // Teams get their own version
+    for (const [socketId, tid] of socketTeam.entries()) {
+      const sock = io.sockets.sockets.get(socketId);
+      if (sock) sock.emit('state', sanitizeForTeam(game, tid));
     }
   }
   function broadcastSlots() {
@@ -963,7 +1111,6 @@ function setupSocket(io) {
       available: adminSlotsAvailable()
     });
   }
-
   function cancelPendingDisq(tid) {
     if (tid && pendingDisq.has(tid)) {
       clearTimeout(pendingDisq.get(tid));
@@ -1033,7 +1180,7 @@ function setupSocket(io) {
       socket.data.adminId = admin.id;
       socket.data.adminToken = token;
       broadcastSlots();
-      socket.emit('state', snapshot(game, 'admin'));
+      socket.emit('state', snapshotAdmin(game));
       ack && ack({ ok: true, token, adminId: admin.id, name: admin.name });
     });
 
@@ -1046,11 +1193,11 @@ function setupSocket(io) {
         socket.data.role = 'admin';
         socket.data.adminId = sess.adminId;
         socket.data.adminToken = token;
-        socket.emit('state', snapshot(game, 'admin'));
+        socket.emit('state', snapshotAdmin(game));
         broadcastSlots();
         return;
       }
-      socket.emit('state', snapshot(game, 'team'));
+      socket.emit('state', sanitizeForTeam(game, null));
     });
 
     socket.on('role:projector', ({ token } = {}) => {
@@ -1062,7 +1209,7 @@ function setupSocket(io) {
       socket.data.role = 'projector';
       socket.data.adminToken = token;
       socket.join('projector');
-      socket.emit('state', snapshot(game, 'projector'));
+      socket.emit('state', sanitizeForProjector(game));
     });
 
     socket.on('role:team', ({ teamId } = {}) => {
@@ -1070,14 +1217,22 @@ function setupSocket(io) {
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
         cancelPendingDisq(teamId);
+
+        // Auto-add to running selection round
+        const s = game.session;
+        if (s.state === 'SELECTION' && !s.selectionAnswers[teamId] &&
+            (t.status === 'active' || t.status === 'approved')) {
+          game._addToSelection(teamId);
+        }
+
         t.connected = true;
         socketTeam.set(socket.id, teamId);
         socket.data.teamId = teamId;
-        socket.emit('state', snapshot(game, 'team'));
+        socket.emit('state', sanitizeForTeam(game, teamId));
         broadcast();
         return;
       }
-      socket.emit('state', snapshot(game, 'team'));
+      socket.emit('state', sanitizeForTeam(game, null));
     });
 
     socket.on('team:register', ({ teamName, students }, ack) => {
@@ -1106,7 +1261,7 @@ function setupSocket(io) {
       cancelPendingDisq(tid);
       const result = game.submitAnswer({ teamId: tid, questionId, answer });
       if (result && result.privateUpdate) {
-        socket.emit('state', snapshot(game, 'team'));
+        socket.emit('state', sanitizeForTeam(game, tid));
       } else {
         broadcast();
       }
@@ -1118,7 +1273,7 @@ function setupSocket(io) {
       if (!tid) return ack && ack({ ok: false });
       cancelPendingDisq(tid);
       const r = game.skipSelectionQuestion({ teamId: tid });
-      socket.emit('state', snapshot(game, 'team'));
+      socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
     });
 
@@ -1127,7 +1282,7 @@ function setupSocket(io) {
       if (!tid) return ack && ack({ ok: false });
       cancelPendingDisq(tid);
       const r = game.selectionGoBack({ teamId: tid });
-      socket.emit('state', snapshot(game, 'team'));
+      socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
     });
 
@@ -1136,7 +1291,7 @@ function setupSocket(io) {
       if (!tid) return ack && ack({ ok: false });
       cancelPendingDisq(tid);
       const r = game.selectionForward({ teamId: tid });
-      socket.emit('state', snapshot(game, 'team'));
+      socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
     });
 

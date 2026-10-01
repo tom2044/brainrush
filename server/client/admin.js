@@ -54,8 +54,8 @@ const Admin = {
     if (a.teams.length !== b.teams.length) return false;
     if (a.answers.length !== b.answers.length) return false;
     if (a.questions.length !== b.questions.length) return false;
-    if ((sa.selectionEndsAt || 0) !== (sb.selectionEndsAt || 0)) return false;
     if ((sa.questionEndsAt || 0) !== (sb.questionEndsAt || 0)) return false;
+    // compare each team's status + total
     for (let i = 0; i < a.teams.length; i++) {
       const ta = a.teams[i], tb = b.teams[i];
       if (!tb || ta.id !== tb.id) return false;
@@ -119,7 +119,10 @@ const Admin = {
                               if (r && !r.ok) toast('⚠ ' + (r.reason || 'Cannot start'));
                             }); },
   qualifySelection()      { Socket.emit('admin:qualifySelection', {}, (r) => {
-                              if (r && r.ok) toast('✓ ' + r.qualified + ' teams qualified');
+                              if (r && r.ok) {
+                                if (r.qualified < 2) toast('⚠ Only ' + r.qualified + ' team(s) qualified — not enough for Round 1');
+                                else toast('✓ ' + r.qualified + ' teams qualified');
+                              }
                               else if (r) toast('⚠ ' + (r.reason || 'Failed'));
                             }); },
   startRound(n)           { Socket.emit('admin:startRound', { round: n }, (r) => {
@@ -317,11 +320,19 @@ const Admin = {
           <button class="btn ghost" id="closeInstr">CLOSE</button>
         </div>`;
     } else if (s.state === 'SELECTION') {
-      const timeLeft = s.selectionEndsAt ? Math.max(0, Math.ceil((s.selectionEndsAt - Date.now()) / 1000)) : 0;
+      const activeCount = s.activeTeamIds.length;
+      const answeredCount = (() => {
+        let n = 0;
+        const sa = s.selectionAnswers || {};
+        Object.keys(sa).forEach(tid => {
+          if (Object.keys(sa[tid].answers || {}).length > 0) n++;
+        });
+        return n;
+      })();
       controls = `
-        <p class="muted mb">Selection round in progress. <b>${fmtClock(timeLeft)}</b> remaining.</p>
+        <p class="muted mb">Selection round in progress — <b>${activeCount}</b> teams, <b>${answeredCount}</b> submitted at least one answer.</p>
         <button class="btn good block" id="qualifyNow">🏁 END &amp; QUALIFY TOP 10</button>
-        <p class="small muted mt">Teams answer at their own pace. Auto-ends at 0:00.</p>`;
+        <p class="small muted mt">No auto-end. Each team has their own 10-minute timer. Click above when ready.</p>`;
     } else if (s.state === 'ROUND_INTRO') {
       controls = '<p class="muted">Round intro — auto-advancing…</p>';
     } else if (s.state === 'QUESTION_ACTIVE') {
@@ -616,9 +627,9 @@ const Admin = {
         </div>`;
       } else if (t === 'saq') {
         f.innerHTML = `<div class="field">
-          <label>CORRECT ANSWER (case-insensitive)</label>
+          <label>CORRECT ANSWER (case-insensitive, will be uppercased)</label>
           <input id="qea" type="text" value="${esc(q.correctAnswer == null ? '' : q.correctAnswer)}"
-                 placeholder="e.g. newton" autocomplete="off" maxlength="60">
+                 placeholder="e.g. NEWTON" autocomplete="off" maxlength="60" style="text-transform:uppercase">
         </div>`;
       } else {
         f.innerHTML = `<div class="grid two" style="gap:10px">
@@ -648,7 +659,7 @@ const Admin = {
         const sel = document.querySelector('input[name="qer"]:checked');
         ca = sel ? +sel.value : 0;
       } else if (type === 'saq') {
-        ca = document.getElementById('qea').value.trim().toLowerCase();
+        ca = document.getElementById('qea').value.trim().toUpperCase();
         if (!ca) return toast('⚠ Correct answer required');
       } else {
         ca = Number(document.getElementById('qea').value);
@@ -678,10 +689,18 @@ const Admin = {
     if (!lb.length) { el.innerHTML = '<p class="muted small">No teams in play yet.</p>'; return; }
     el.innerHTML = lb.map((t, i) => {
       const cls = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
+      const parts = [];
+      if (t.points.r0) parts.push('R0 ' + t.points.r0);
+      if (t.points.r1) parts.push('R1 ' + t.points.r1);
+      if (t.points.r2) parts.push('R2 ' + t.points.r2);
+      if (t.points.r3) parts.push('R3 ' + t.points.r3);
+      if (t.points.r4) parts.push('R4 ' + t.points.r4);
+      if (t.points.r5) parts.push('R5 ' + t.points.r5);
+      const breakdown = parts.length ? parts.join(' · ') : 'no points yet';
       return `<div class="lb-row ${cls}">
         <div class="rank">${i + 1}</div>
         <div class="tname">${esc(t.teamName)}
-          <div class="small muted">R0 ${t.points.r0 || 0} · R1 ${t.points.r1 || 0} · R2 ${t.points.r2 || 0} · R3 ${t.points.r3 || 0} · R4 ${t.points.r4 || 0} · R5 ${t.points.r5 || 0}</div>
+          <div class="small muted">${breakdown}</div>
         </div>
         <div class="pts">${t.points.total || 0}</div>
       </div>`;

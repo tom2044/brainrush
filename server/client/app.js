@@ -5,8 +5,8 @@ const TEAM_KEY = 'brainrush:teamid';
 
 const App = {
   role: null,
-  screen: 'welcome',   // 'welcome' | 'roles'
-  adminSlots: { total: 2, active: 0, available: 2 },
+  screen: 'welcome',
+  adminSlots: { total: 3, active: 0, available: 3 },
 
   boot() {
     Socket.init();
@@ -26,7 +26,6 @@ const App = {
 
     Socket.on('admin:slots', (data) => {
       App.adminSlots = data;
-      // Live-update whichever screen is showing
       if (!App.role && App.screen === 'roles') {
         const root = document.getElementById('root');
         if (root) renderRoles(root);
@@ -122,11 +121,11 @@ function renderWelcome(root) {
       </div>
       <p class="tagline">
         Welcome, future <span class="accent">Mechanical Engineers</span>.<br>
-        Six stages. Ten teams. One champion.
+        Six stages. One champion.
       </p>
       <div class="meta-chips">
         <span class="chip"><span class="ico">⚙️</span> 6 STAGES</span>
-        <span class="chip"><span class="ico">🏆</span> 10 TEAMS</span>
+        <span class="chip"><span class="ico">🏆</span> TOP 10 QUALIFY</span>
         <span class="chip"><span class="ico">⚡</span> REAL-TIME</span>
         <span class="chip"><span class="ico">🎯</span> BUZZER</span>
       </div>
@@ -140,7 +139,7 @@ function renderWelcome(root) {
         </div>
         <div class="feature">
           <span class="ico">⚙️</span>
-          <div><div class="ttl">Six Stages</div><div class="desc"> Selection · Guess · Speed · Challenge · Rapid · Finale</div></div>
+          <div><div class="ttl">Six Stages</div><div class="desc">Selection · Guess · Speed · Challenge · Rapid · Finale</div></div>
         </div>
         <div class="feature">
           <span class="ico">🏅</span>
@@ -160,8 +159,6 @@ function renderRoles(root) {
   App.screen = 'roles';
   const slots = App.adminSlots;
   const showAdmin = slots.available > 0;
-
-  // If only one card will show, center it by using a single-column grid
   const gridStyle = showAdmin ? '' : 'grid-template-columns: minmax(240px, 340px);';
 
   root.innerHTML = `
@@ -193,7 +190,7 @@ function renderRoles(root) {
   const rcAdmin = document.getElementById('rcAdmin');
   if (rcAdmin) rcAdmin.onclick = () => {
     if (App.adminSlots.available > 0) App.setRole('admin');
-    else toast('⚠ Both admin slots are full');
+    else toast('⚠ All admin slots are full');
   };
   document.getElementById('rcTeam').onclick = () => App.setRole('team');
   document.getElementById('backBtn').onclick = () => {
@@ -202,9 +199,6 @@ function renderRoles(root) {
   };
 }
 
-/* ============================================================
-   BOOT
-   ============================================================ */
 try {
   App.boot();
 } catch (e) {

@@ -24,32 +24,104 @@ const Team = {
   },
 
   setState(s) {
-    this.state = s;
     this.loadTeamId();
     this.bindVisibility();
+
+    const prev = this.state;
+    this.state = s;
+
+    if (prev && this._sameForTeam(prev, s)) return;
+
+    const savedInput = this._saveInput();
     render();
+    this._restoreInput(savedInput);
+  },
+
+  _sameForTeam(a, b) {
+    if (!a || !b) return false;
+    const sa = a.session, sb = b.session;
+    if (sa.state !== sb.state) return false;
+    if (sa.round !== sb.round) return false;
+    if (sa.qIndex !== sb.qIndex) return false;
+    if (sa.currentQuestionId !== sb.currentQuestionId) return false;
+    if (sa.buzzerLockedByTeamId !== sb.buzzerLockedByTeamId) return false;
+    if ((sa.challenge && sa.challenge.challengerId) !== (sb.challenge && sb.challenge.challengerId)) return false;
+
+    const ta = sa.selectionAnswers && sa.selectionAnswers[this.teamId];
+    const tb = sb.selectionAnswers && sb.selectionAnswers[this.teamId];
+    const qa = ta ? ta.qIndex : 0;
+    const qb = tb ? tb.qIndex : 0;
+    if (qa !== qb) return false;
+    const aa = ta ? Object.keys(ta.answers || {}).length : 0;
+    const ab = tb ? Object.keys(tb.answers || {}).length : 0;
+    if (aa !== ab) return false;
+
+    const meA = a.teams.find(t => t.id === this.teamId);
+    const meB = b.teams.find(t => t.id === this.teamId);
+    if (!meA || !meB) return false;
+    if (meA.status !== meB.status) return false;
+    if ((meA.points.total || 0) !== (meB.points.total || 0)) return false;
+
+    const ansA = a.answers.filter(x => x.teamId === this.teamId).length;
+    const ansB = b.answers.filter(x => x.teamId === this.teamId).length;
+    if (ansA !== ansB) return false;
+
+    const rvA = sa.lastReveal && sa.lastReveal.questionId;
+    const rvB = sb.lastReveal && sb.lastReveal.questionId;
+    if (rvA !== rvB) return false;
+
+    return true;
+  },
+
+  _saveInput() {
+    const el = document.activeElement;
+    if (!el || !el.tagName) return null;
+    if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return null;
+    if (!el.id) return null;
+    return {
+      id: el.id,
+      value: el.value,
+      selStart: el.selectionStart,
+      selEnd: el.selectionEnd
+    };
+  },
+
+  _restoreInput(saved) {
+    if (!saved) return;
+    const el = document.getElementById(saved.id);
+    if (!el) return;
+    el.value = saved.value;
+    try { el.setSelectionRange(saved.selStart, saved.selEnd); } catch (e) {}
+    el.focus();
   },
 
   bindVisibility() {
     if (this._visBound) return;
     this._visBound = true;
 
+    window.addEventListener('beforeunload', () => {
+      try { sessionStorage.setItem('brainrush:refreshing', '1'); } catch (e) {}
+    });
+
+    setTimeout(() => {
+      try { sessionStorage.removeItem('brainrush:refreshing'); } catch (e) {}
+    }, 3000);
+
     const report = () => {
+      try {
+        if (sessionStorage.getItem('brainrush:refreshing')) return;
+      } catch (e) {}
       if (!this.state) return;
       const s = this.state.session;
       const me = this.myTeam();
       if (!me || me.status !== 'active') return;
-      // Only disqualify during active rounds (not selection waiting, not lobby)
-      const active = ['QUESTION_ACTIVE', 'ROUND_INTRO', 'SELECTION'].includes(s.state);
-      if (!active) return;
-      if (s.state === 'SELECTION' && !s.selectionEndsAt) return;
+      if (s.state !== 'QUESTION_ACTIVE' && s.state !== 'ROUND_INTRO') return;
       Socket.emit('team:visibilityLost', {});
     };
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) report();
     });
-    window.addEventListener('blur', () => report());
   },
 
   /* ---- Actions ---- */
@@ -97,21 +169,11 @@ const Team = {
       case 'registered':   return 'PENDING';
       case 'approved':     return 'APPROVED';
       case 'active':       return 'IN PLAY';
-      case 'eliminated':   return 'OUT';
+      case 'eliminated':   return 'ELIMINATED';
       case 'disqualified': return 'DISQUALIFIED';
       case 'winner':       return 'RANK #' + (me.finalRank || '?');
       default:             return me.status;
     }
-  },
-  roundName(n) {
-    return {
-      0: 'Selection Round',
-      1: 'Round 1 · Closest Guess',
-      2: 'Round 2 · Speed & Accuracy',
-      3: 'Round 3 · Challenge Matrix',
-      4: 'Round 4 · Bonus Rapid-Fire',
-      5: 'Round 5 · Grand Finale'
-    }[n] || 'Round';
   },
 
   /* ---- Render ---- */
@@ -152,6 +214,7 @@ const Team = {
     if (!c) return;
 
     if (me.status === 'disqualified')   return this.disqualified(c, me);
+    if (me.status === 'eliminated')     return this.eliminated(c, me, s);
     if (me.status === 'registered')     return this.wait(c, me, 'Waiting for admin approval…');
     if (s.state === 'LOBBY')            return this.wait(c, me, 'Approved! Waiting for the quiz…');
     if (s.state === 'INSTRUCTIONS')     return this.instructions(c, me, s);
@@ -171,10 +234,21 @@ const Team = {
           DISQUALIFIED
         </h2>
         <p style="color:var(--danger-red);font-weight:600;font-size:16px">
-          You left the quiz screen during an active round.
+          You minimized the browser or switched tabs/apps during an active round.
         </p>
         <p class="small muted mt">Team: <b>${esc(me.teamName)}</b></p>
         <p class="small muted">This decision cannot be reversed.</p>
+      </div>`;
+  },
+
+  eliminated(c, me, s) {
+    c.innerHTML = `
+      <div class="wait-screen">
+        <div class="wait-icon">📉</div>
+        <h2>ELIMINATED</h2>
+        <p>Your team was eliminated in <b>${me.eliminatedInRound === 0 ? 'Selection Round' : 'Round ' + me.eliminatedInRound}</b>.</p>
+        <p class="small muted mt">Team: <b>${esc(me.teamName)}</b></p>
+        <p class="small muted">Thanks for playing!</p>
       </div>`;
   },
 
@@ -226,14 +300,14 @@ const Team = {
       <h2>📖 INSTRUCTIONS</h2>
       <p class="muted">Read carefully before entering the arena.</p>
       <ul>
-        <li><b>Selection Round:</b> 10 short-answer questions in 10 minutes. +2 correct, −1 wrong, speed bonus for fast correct answers. Top 10 teams qualify.</li>
+        <li><b>Selection Round:</b> 10 short answers in 10 minutes. +2 correct, −1 wrong, speed bonus.</li>
         <li><b>Round 1 — Closest Guess:</b> 10 teams. Numeric guesses, closest wins.</li>
-        <li><b>Round 2 — Speed &amp; Accuracy:</b> 8 teams. Fastest correct MCQs score highest.</li>
-        <li><b>Round 3 — Challenge Matrix:</b> 6 teams. Turn-based MCQs. Steal with Challenge for bonus points.</li>
-        <li><b>Round 4 — Bonus Rapid-Fire:</b> 4 teams. Quick-fire MCQs. +10 correct, −5 wrong.</li>
-        <li><b>Round 5 — Grand Finale:</b> 2 teams. Buzzer round. +20 correct, −10 wrong.</li>
-        <li>⚠️ <b>Do not refresh, minimize, switch apps, or lock your screen.</b> You will be disqualified instantly.</li>
-        <li>📵 Enable Do Not Disturb before the round starts.</li>
+        <li><b>Round 2 — Speed &amp; Accuracy:</b> 8 teams. Fastest correct MCQs.</li>
+        <li><b>Round 3 — Challenge Matrix:</b> 6 teams. Steal with Challenge.</li>
+        <li><b>Round 4 — Bonus Rapid-Fire:</b> 4 teams. Quick-fire MCQs.</li>
+        <li><b>Round 5 — Grand Finale:</b> 2 teams. Buzzer round.</li>
+        <li>⚠️ <b>Do not minimize or switch tabs</b> during active rounds — you'll be disqualified.</li>
+        <li>✅ If you face a problem, <b>refresh the page</b> — it's safe.</li>
       </ul>
       <div class="instr-footer">
         <label class="agree-label">
@@ -247,8 +321,7 @@ const Team = {
     if (cb && !me.instructionsAck) cb.onchange = () => { if (cb.checked) Team.ackInstructions(); };
   },
 
-  /* ---- SELECTION round UI ---- */
-    selection(c, me, s) {
+  selection(c, me, s) {
     const allQ = this.state.questions
       .filter(x => x.roundNumber === 0 && x.isActive)
       .sort((a, b) => a.order - b.order);
@@ -257,18 +330,13 @@ const Team = {
     const totalQ = allQ.length;
     const timeLeft = s.selectionEndsAt ? Math.max(0, (s.selectionEndsAt - now()) / 1000) : 0;
 
-    // current question (may be undefined if past last)
     const q = allQ[rec.qIndex];
     const done = !q;
 
-    // is current question locked (already answered/skipped)?
     const locked = !done && rec.answers[q.id] != null;
     const lockedData = locked ? rec.answers[q.id] : null;
 
-    // is this the last question?
     const isLast = !done && (rec.qIndex + 1 >= totalQ);
-
-    // previous button enabled?
     const canPrev = rec.qIndex > 0;
 
     c.innerHTML = `
@@ -366,7 +434,6 @@ const Team = {
       }
     }
 
-    // local countdown
     if (this.timerHandle) clearInterval(this.timerHandle);
     const tEl = document.getElementById('selTimer');
     const bEl = document.getElementById('selBar');
@@ -380,10 +447,6 @@ const Team = {
       };
       this.timerHandle = setInterval(tick, 200);
     }
-  },
-
-  roundQuestionsTotal(roundNumber) {
-    return this.state.questions.filter(q => q.roundNumber === roundNumber && q.isActive).length;
   },
 
   roundIntro(c, s) {

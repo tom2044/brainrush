@@ -25,6 +25,7 @@
   gap: 28px;
 }
 
+/* ---------- GIANT LOGO ---------- */
 .proj-logo h1 {
   font-family: 'Orbitron', sans-serif;
   font-size: clamp(100px, 14vw, 220px);
@@ -74,6 +75,7 @@
   margin-top: 10px;
 }
 
+/* ---------- BADGES ---------- */
 .proj-badge {
   display: inline-block;
   padding: 16px 40px;
@@ -101,6 +103,7 @@
   letter-spacing: 2px;
 }
 
+/* ---------- TITLES ---------- */
 .proj-big-title {
   font-family: 'Orbitron', sans-serif;
   font-size: clamp(60px, 8vw, 110px);
@@ -144,6 +147,7 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+/* ---------- QUALIFIERS ---------- */
 .proj-qualifiers {
   display: flex;
   flex-direction: column;
@@ -186,6 +190,7 @@
   font-size: 32px;
 }
 
+/* ---------- CLOCK ---------- */
 .proj-clock {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 800;
@@ -203,6 +208,7 @@
   text-shadow: 0 0 100px rgba(196, 122, 63, 1), 0 0 200px rgba(196, 122, 63, .6);
 }
 
+/* ---------- PROGRESS ---------- */
 .proj-progress {
   width: 85%;
   max-width: 1300px;
@@ -224,6 +230,7 @@
   box-shadow: 0 0 40px rgba(196, 122, 63, 1);
 }
 
+/* ---------- TOPBAR ---------- */
 .proj-topbar {
   display: flex;
   justify-content: space-between;
@@ -231,6 +238,7 @@
   margin-bottom: 60px;
 }
 
+/* ---------- QUESTION TEXT ---------- */
 .proj-question-text {
   font-family: 'Orbitron', sans-serif;
   font-size: clamp(48px, 6vw, 92px);
@@ -247,6 +255,7 @@
   margin: 30px 0;
 }
 
+/* ---------- REVEAL ---------- */
 .proj-correct-label {
   font-family: 'JetBrains Mono', monospace;
   font-size: 18px;
@@ -315,6 +324,7 @@
   animation: correct-pop-lg .6s cubic-bezier(.34, 1.56, .64, 1);
 }
 
+/* ---------- WHO SCORED ---------- */
 .proj-who { margin-top: 60px; text-align: center; }
 
 .proj-who h3 {
@@ -354,6 +364,7 @@
   color: var(--acid-green);
 }
 
+/* ---------- LEADERBOARD ---------- */
 .proj-lb {
   display: flex;
   flex-direction: column;
@@ -396,6 +407,7 @@
   font-size: 34px;
 }
 
+/* ---------- ELIMINATED ---------- */
 .proj-eliminated {
   margin-top: 50px;
   text-align: center;
@@ -415,6 +427,7 @@
   letter-spacing: 2px;
 }
 
+/* ---------- FINISHED ---------- */
 .proj-finished { gap: 40px; }
 
 .proj-trophy {

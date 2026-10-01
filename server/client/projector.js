@@ -1,5 +1,9 @@
 'use strict';
 
+/* ============================================================
+   BRAINRUSH — Projector View (admin-only, view-only)
+   ============================================================ */
+
 const Projector = {
   socket: null,
   state: null,
@@ -290,6 +294,7 @@ const Projector = {
   }
 };
 
+/* ---- Local clock tick every 250ms ---- */
 setInterval(() => {
   if (!Projector.state) return;
   const s = Projector.state.session;

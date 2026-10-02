@@ -88,17 +88,18 @@ function shuffleArr(arr) {
 function seedQuestions() {
   const out = [];
 
+  /* ---- SELECTION (10 SAQ) ---- */
   const SEL = [
-    ['Full form of CPU', 'CENTRAL PROCESSING UNIT'],
-    ['Unit of force (SI)', 'NEWTON'],
-    ['H2O is the chemical formula for?', 'WATER'],
-    ['Number of sides in a hexagon?', '6'],
-    ['Largest planet in our solar system?', 'JUPITER'],
-    ['Speed of light (km/s, rounded)?', '300000'],
-    ['Chemical symbol for iron?', 'FE'],
-    ['Square root of 144?', '12'],
-    ['First man on the moon (last name)?', 'ARMSTRONG'],
-    ['Boiling point of water at sea level in °C?', '100']
+    ['Who is the first ever ODI captain for Indian men\'s national cricket team?', 'AJIT WADEKAR'],
+    ['what is the currency of France?', 'EURO'],
+    ['Full form of NSS', 'NATIONAL SERVICE SCHEME'],
+    ['Which programming language is widely used in AI?', 'PYTHON'],
+    ['What type of energy is stored in a compressed spring?', 'ELASTIC POTENTIAL ENERGY'],
+    ['What is the name of the India–Russia military exercise?', 'INDRA'],
+    ['How many degrees of freedom does a rigid body have in three-dimensional space?', 'SIX'],
+    ['Which country won the 2006 FIFA World Cup?', 'ITALY'],
+    ['Which city is located on two continents?', 'ISTANBUL'],
+    ['The term "Artificial Intelligence" was formally coined by whom?', 'JOHN MCCARTHY']
   ];
   SEL.forEach(([t, a], i) => out.push({
     id: 'selq' + (i + 1), roundNumber: 0, order: i + 1, type: 'saq',
@@ -106,89 +107,134 @@ function seedQuestions() {
     unit: '', points: 2, timeLimitSec: 0, isActive: true
   }));
 
+  /* ---- ROUND 1: CLOSEST GUESS (6 numeric) ---- */
   const R1 = [
-    ['Height of the Statue of Unity (m)', 182, 'm'],
-    ['Year the first iPhone was released', 2007, ''],
-    ['Bones in an adult human body', 206, ''],
-    ['Population of India 2024 (crores)', 144, 'crore'],
-    ['Average Earth-Sun distance (million km)', 150, 'M km'],
-    ['Keys on a standard piano', 88, '']
+    ['What is the elevation of Mount Everest to the nearest metre under the jointly announced modern measurement?', 8849, 'm'],
+    ['In which year did the Soviet Union dissolve and the Russian Federation emerge?', 1991, ''],
+    ['What is the approximate speed of sound in dry air at 20°C, in m/s?', 343, 'm/s'],
+    ['How many runs did Virat Kohli score in IPL 2016?', 973, 'runs'],
+    ['In which year was make in India launched?', 2014, ''],
+    ['Find the next number: 1, 11, 21, 1211, 111221, ?', 312211, '']
   ];
   R1.forEach(([t, a, u], i) => out.push({
     id: 'r1q' + (i + 1), roundNumber: 1, order: i + 1, type: 'closest_guess',
     text: t, correctAnswer: a, unit: u, points: 10, timeLimitSec: 45, isActive: true
   }));
 
+  /* ---- ROUND 2: SPEED & ACCURACY (10 MCQ) ---- */
   const R2 = [
-    ['Capital of Australia?', ['Sydney', 'Canberra', 'Melbourne', 'Perth'], 1],
-    ['Which planet is the Red Planet?', ['Venus', 'Mars', 'Jupiter', 'Mercury'], 1],
-    ['Chemical symbol for gold?', ['Go', 'Gd', 'Au', 'Ag'], 2],
-    ['Who wrote "Romeo and Juliet"?', ['Dickens', 'Shakespeare', 'Austen', 'Twain'], 1],
-    ['Largest ocean on Earth?', ['Atlantic', 'Indian', 'Arctic', 'Pacific'], 3],
-    ['How many continents?', ['5', '6', '7', '8'], 2],
-    ['H2O is the formula for...', ['Salt', 'Water', 'Sugar', 'Oxygen'], 1],
-    ['Fastest land animal?', ['Lion', 'Cheetah', 'Horse', 'Greyhound'], 1],
-    ['Currency of Japan?', ['Won', 'Yuan', 'Yen', 'Ringgit'], 2],
-    ['Who painted the Mona Lisa?', ['Michelangelo', 'Raphael', 'da Vinci', 'Donatello'], 2]
+    [
+      'A heavy metal ball and a light tennis ball drop at the same time from the same height in an empty room with no air. Which ball hits the floor first?',
+      ['The heavy metal ball hits first.', 'The light tennis ball hits first.', 'Both balls hit the floor at the same time.', 'It depends on the size of the balls.'],
+      2
+    ],
+    [
+      'full form of GATE examination.',
+      ['Graduate Aptitude Test in Engineering.', 'General Ability Test for Engineers.', 'Global Aptitude and Technical Evaluation.', 'Graduate Assessment of Technical Education.'],
+      0
+    ],
+    [
+      'Which mathematical constant is approximately equal to 2.71828?',
+      ['π', 'φ', 'e', 'γ'],
+      2
+    ],
+    [
+      'Which international military alliance was established in 1949, primarily based on the principle that an attack against one member is considered an attack against all members?',
+      ['ASEAN', 'NATO', 'SAARC', 'OPEC'],
+      1
+    ],
+    [
+      'In chess, which piece can never change the colour of the square on which it moves?',
+      ['Queen', 'Knight', 'Bishop', 'Rook'],
+      2
+    ],
+    [
+      'A particle moves in a circular path at constant speed. Which quantity necessarily changes continuously?',
+      ['Speed', 'Kinetic energy', 'Velocity', 'Mass'],
+      2
+    ],
+    [
+      'Which tennis tournament is traditionally played on grass courts in London and is considered one of the four Grand Slam tournaments?',
+      ['US Open', 'French Open', 'Australian Open', 'Wimbledon'],
+      3
+    ],
+    [
+      'Which term describes the process of providing carefully designed instructions or questions to an AI model to obtain a desired response?',
+      ['Prompting', 'Rendering', 'Compiling', 'Debugging'],
+      0
+    ],
+    [
+      'The NSS motto "NOT ME BUT YOU" reflects which core principle of the scheme?',
+      ['Democratic living', 'Selfless service', 'National integration', 'Dignity of labour'],
+      0
+    ],
+    [
+      'Which region of West Bengal is Ramkrishna Mahato Government Engineering College located in, known for its distinctive red and lateritic soil and undulating landscape?',
+      ['Himalayan Region', 'Rarh Region', 'Sundarbans Region', 'Terai Region'],
+      1
+    ]
   ];
   R2.forEach(([t, o, a], i) => out.push({
     id: 'r2q' + (i + 1), roundNumber: 2, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 20, isActive: true
   }));
 
+  /* ---- ROUND 3: CHALLENGE MATRIX (18 MCQ) ---- */
   const R3 = [
-    ['Largest planet?', ['Saturn', 'Jupiter', 'Neptune', 'Earth'], 1],
-    ['Longest river in the world?', ['Amazon', 'Yangtze', 'Nile', 'Mississippi'], 2],
-    ['Smallest prime number?', ['0', '1', '2', '3'], 2],
-    ['Square root of 144?', ['11', '12', '13', '14'], 1],
-    ['Who invented the telephone?', ['Edison', 'Tesla', 'Bell', 'Marconi'], 2],
-    ['Boiling point of water at sea level (C)?', ['90', '95', '100', '105'], 2],
-    ['Sides on a hexagon?', ['5', '6', '7', '8'], 1],
-    ['Author of Harry Potter?', ['Tolkien', 'Rowling', 'Dahl', 'Lewis'], 1],
-    ['Gas plants primarily absorb?', ['Oxygen', 'Nitrogen', 'CO2', 'Hydrogen'], 2],
-    ['Capital of Canada?', ['Toronto', 'Vancouver', 'Ottawa', 'Montreal'], 2],
-    ['7 x 8 = ?', ['54', '56', '58', '64'], 1],
-    ['WWII ended in...', ['1943', '1944', '1945', '1946'], 2],
-    ['Largest hot desert?', ['Gobi', 'Kalahari', 'Sahara', 'Arabian'], 2],
-    ['Chemical symbol for sodium?', ['So', 'Sd', 'Na', 'Ni'], 2],
-    ['Minutes in a day?', ['1200', '1380', '1440', '1500'], 2],
-    ['Hardest natural substance?', ['Gold', 'Iron', 'Diamond', 'Quartz'], 2],
-    ['First man on the moon?', ['Aldrin', 'Gagarin', 'Armstrong', 'Collins'], 2],
-    ['CPU stands for?', ['Central Process Unit', 'Central Processing Unit', 'Computer Personal Unit', 'Central Processor Union'], 1]
+    ['Which country was formerly known as Abyssinia?', ['Eritrea', 'Ethiopia', 'Sudan', 'Somalia'], 1],
+    ['A photon and an electron have the same wavelength. Which has the greater momentum?', ['Photon', 'Electron', 'They have equal momentum', 'Cannot be determined'], 2],
+    ['What is the SI unit of magnetic flux?', ['Tesla', 'Weber', 'Henry', 'Gauss'], 1],
+    ['Who formulated the uncertainty principle in quantum mechanics?', ['Max Planck', 'Werner Heisenberg', 'Erwin Schrödinger', 'Niels Bohr'], 1],
+    ['What is the name of Manchester United Football Club\'s home stadium?', ['Stamford Bridge', 'Anfield', 'Old Trafford', 'Etihad Stadium'], 2],
+    ['Against which team did Sachin Tendulkar score his first ODI century?', ['Pakistan', 'Australia', 'Sri Lanka', 'England'], 2],
+    ['Who holds the Indian national record in the women\'s 400m hurdles, breaking P.T. Usha\'s long-standing mark?', ['Vithya Ramraj', 'Hima Das', 'Jyothi Yarraji', 'Priyanka Goswami'], 0],
+    ['What most distinguishes an AI agent from a conventional chatbot?', ['An agent can potentially plan and execute multi-step actions using tools', 'An agent cannot generate text', 'A chatbot always has internet access', 'An agent does not require a language model'], 0],
+    ['Which is the largest island in the world?', ['Borneo', 'Madagascar', 'Greenland', 'New Guinea'], 2],
+    ['What is the primary purpose of a large language model such as GPT?', ['To store every sentence from the internet in a database', 'To predict and generate sequences of tokens based on learned patterns', 'To replace operating-system kernels', 'To convert source code directly into machine hardware'], 1],
+    ['Which country gifted the Statue of Liberty to the United States?', ['United Kingdom', 'France', 'Spain', 'Italy'], 1],
+    ['What is the full form of CAD?', ['Computer-Aided Design', 'Computer-Aided Development', 'Computerized Architectural Design', 'Computer Analysis and Design'], 0],
+    ['What is the motto of NSS?', ['Service Before Self', 'Not Me But You', 'Unity and Discipline', 'Work Is Worship'], 1],
+    ['NSS volunteers are primarily involved in:', ['Military training', 'Community service', 'Professional sports', 'Industrial training'], 1],
+    ['Where was the 18th BRICS Summit held in September 2026?', ['Vigyan Bhavan, New Delhi', 'Bharat Mandapam, New Delhi', 'Pragati Maidan, Mumbai', 'Hyderabad International Convention Centre'], 1],
+    ['On which occasion was NSS formally launched?', ['Republic Day', 'Independence Day', 'Gandhi Jayanti', 'Mahatma Gandhi\'s birth centenary'], 3],
+    ['Which satellite was launched by ISRO aboard GSLV-F17 in September 2026?', ['Cartosat-4', 'EOS-07', 'RISAT-3', 'EOS-05'], 3],
+    ['According to September 2026 current-affairs reports, what was India\'s real GDP growth in Q1 of FY 2026–27?', ['8.9%', '5.9%', '7.8%', '6.5%'], 2]
   ];
   R3.forEach(([t, o, a], i) => out.push({
     id: 'r3q' + (i + 1), roundNumber: 3, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 30, isActive: true
   }));
 
+  /* ---- ROUND 4: RAPID FIRE (10 MCQ) ---- */
   const R4 = [
-    ['2 + 2 x 2 = ?', ['4', '6', '8', '10'], 1],
-    ['Capital of India?', ['Mumbai', 'Delhi', 'Kolkata', 'Chennai'], 1],
-    ['Largest mammal?', ['Elephant', 'Blue whale', 'Giraffe', 'Hippo'], 1],
-    ['9 x 9 = ?', ['72', '79', '81', '89'], 2],
-    ['Largest country by area?', ['Canada', 'China', 'USA', 'Russia'], 3],
-    ['Chemical symbol for iron?', ['Ir', 'In', 'Fe', 'Fr'], 2],
-    ['Colors in a rainbow?', ['5', '6', '7', '8'], 2],
-    ['Square root of 225?', ['12', '13', '14', '15'], 3],
-    ['Planet with the most moons?', ['Jupiter', 'Saturn', 'Uranus', 'Neptune'], 1],
-    ['Theory of relativity by?', ['Newton', 'Einstein', 'Bohr', 'Hawking'], 1]
+    ['What is the capital of Canada?', ['Toronto', 'Vancouver', 'Ottawa', 'Montreal'], 2],
+    ['Which programming language was created by Guido van Rossum?', ['Java', 'Python', 'C++', 'Ruby'], 1],
+    ['What is the currency of Japan?', ['Won', 'Yuan', 'Yen', 'Ringgit'], 2],
+    ['Which Indian automobile company owns the Jaguar Land Rover group?', ['Mahindra', 'Tata Motors', 'Maruti Suzuki', 'Ashok Leyland'], 1],
+    ['An ideal gas expands reversibly and adiabatically. Which quantity remains constant during the process?', ['Temperature', 'Entropy', 'Pressure', 'Internal energy'], 1],
+    ['How many terminals does a transistor have?', ['One', 'Two', 'Three', 'Four'], 2],
+    ['For a system in static equilibrium, which condition must be satisfied in planar mechanics?', ['ΣF = 0 only', 'ΣM = 0 only', 'ΣF = 0 and ΣM = 0', 'Velocity = 0 only'], 2],
+    ['Which quantum number determines the shape of an orbital?', ['Principal quantum number', 'Azimuthal quantum number', 'Magnetic quantum number', 'Spin quantum number'], 1],
+    ['How many players from each team are on the court at one time in volleyball?', ['5', '6', '7', '8'], 1],
+    ['In which year was the National Service Scheme (NSS) launched in India?', ['1950', '1962', '1969', '1975'], 2]
   ];
   R4.forEach(([t, o, a], i) => out.push({
     id: 'r4q' + (i + 1), roundNumber: 4, order: i + 1, type: 'mcq',
     text: t, options: o, correctAnswer: a, points: 10, timeLimitSec: 10, isActive: true
   }));
 
+  /* ---- ROUND 5: GRAND FINALE (10 MCQ) ---- */
   const R5 = [
-    ['15 + 27 = ?', ['40', '41', '42', '43'], 2],
-    ['Capital of Japan?', ['Osaka', 'Kyoto', 'Tokyo', 'Nagoya'], 2],
-    ['Largest ocean?', ['Atlantic', 'Indian', 'Arctic', 'Pacific'], 3],
-    ['Square root of 169?', ['11', '12', '13', '14'], 2],
-    ['Author of "Origin of Species"?', ['Newton', 'Darwin', 'Einstein', 'Hawking'], 1],
-    ['Chemical symbol for silver?', ['Si', 'Ag', 'Au', 'Al'], 1],
-    ['Number of players in a cricket team?', ['9', '10', '11', '12'], 2],
-    ['Smallest continent?', ['Europe', 'Australia', 'Antarctica', 'South America'], 1],
-    ['Largest internal organ in human body?', ['Heart', 'Liver', 'Lungs', 'Kidney'], 1],
-    ['Value of pi (2 decimal places)?', ['3.12', '3.14', '3.16', '3.18'], 1]
+    ['What is the anatomical term for the thin membrane that may partially surround the vaginal opening?', ['Hymen', 'Cervix', 'Endometrium', 'Labia'], 0],
+    ['what is name of annual cultural fest of RKMGEC?', ['aikatan pancharanga', 'aikatan pancharan', 'aikatan pancharongo', 'aikatan pancharang'], 0],
+    ['Which Indian film won the Academy Award for Best Original Song for "Naatu Naatu"?', ['RRR', 'Pushpa: The Rise', 'Baahubali 2: The Conclusion', 'Kantara'], 0],
+    ['Which novel was written by Bankim Chandra Chattopadhyay?', ['Aranyak', 'Kapalkundala', 'Padma Nadir Majhi', 'Pather Panchali'], 1],
+    ['A projectile has maximum horizontal range when projected at:', ['30°', '45°', '60°', '90°'], 1],
+    ['What was the former name of Maulana Abul Kalam Azad University of Technology (MAKAUT), West Bengal?', ['West Bengal University of Technology', 'West Bengal Institute of Technology', 'Bengal Technical University', 'West Bengal State University of Technology'], 0],
+    ['Who sang the iconic Bengali song "Coffee Houser Sei Adda Ta"?', ['Hemanta Mukhopadhyay', 'Manna Dey', 'Kishore Kumar', 'Nachiketa Chakraborty'], 1],
+    ['Which Indian football club is popularly known as the "Red and Gold Brigade"?', ['Mohun Bagan', 'East Bengal', 'Kerala Blasters', 'FC Goa'], 1],
+    ['From which city did the RMS Titanic begin its maiden voyage?', ['Liverpool', 'Southampton', 'London', 'Belfast'], 1],
+    ['what is the name of annual techfest of RKMGEC?', ['Techhub', 'Techlava Ignite', 'Techlavya Ignite', 'Brainrush'], 2]
   ];
   R5.forEach(([t, o, a], i) => out.push({
     id: 'r5q' + (i + 1), roundNumber: 5, order: i + 1, type: 'mcq',
@@ -329,36 +375,29 @@ class Game {
           return { ok: false, reason: 'Not in selection' };
         }
       }
-
       if (rec.endsAt && Date.now() > rec.endsAt) {
         return { ok: false, reason: 'Your 10 minutes are up' };
       }
-
       const existing = rec.answers[questionId];
       if (existing && existing.locked) {
         return { ok: false, reason: 'Already answered' };
       }
-
       const myOrder = s.selectionOrder[teamId] || [];
       const myQ = this.questions.find(q => q.id === questionId);
       if (!myQ || myOrder.indexOf(questionId) === -1) {
         return { ok: false, reason: 'Not your question' };
       }
-
       const answeredAt = Date.now();
       const norm = normalizeAnswer(answer);
       const ok = norm === myQ.correctAnswer;
       const pts = ok ? CFG.SELECTION_CORRECT : CFG.SELECTION_WRONG;
-
       rec.answers[questionId] = { raw: norm, isCorrect: ok, pts, at: answeredAt, locked: true };
-
       const t = this.team(teamId);
       if (t) {
         t.points.r0 = (t.points.r0 || 0) + pts;
         t.points.total = (t.points.total || 0) + pts;
         t.latency += (answeredAt - (rec.qStartedAt || answeredAt));
       }
-
       this.answers.push({
         id: uuid(), questionId, teamId, roundNumber: 0,
         rawAnswer: norm, receivedAt: answeredAt,
@@ -366,10 +405,8 @@ class Game {
         isCorrect: ok, pointsAwarded: pts,
         wasChallenge: false, guessDelta: null, wasSkip: false
       });
-
       rec.qIndex += 1;
       rec.qStartedAt = Date.now();
-
       return { ok: true, privateUpdate: true };
     }
 
@@ -379,7 +416,6 @@ class Game {
     if (!s.activeTeamIds.includes(teamId)) return { ok: false, reason: 'Not in play' };
     if (this.answers.some(a => a.questionId === questionId && a.teamId === teamId))
       return { ok: false, reason: 'Already answered' };
-
     if (s.round === 3) {
       if (s.challenge && s.challenge.questionId === questionId) {
         if (teamId !== s.challenge.challengerId) return { ok: false, reason: 'Not your turn' };
@@ -425,28 +461,20 @@ class Game {
   _addToSelection(teamId) {
     const s = this.session;
     if (s.state !== 'SELECTION') return;
-
     const t = this.team(teamId);
     if (!t) return;
     t.status = 'active';
     t.points.r0 = 0;
     t.latency = 0;
-
     delete s.selectionAnswers[teamId];
-
     const baseOrder = this.roundQuestions(0).map(q => q.id);
     const myOrder = shuffleArr(baseOrder);
     s.selectionOrder[teamId] = myOrder;
-
     const startAt = Date.now();
     s.selectionAnswers[teamId] = {
-      qIndex: 0,
-      answers: {},
-      qStartedAt: startAt,
-      endsAt: startAt + CFG.SELECTION_TOTAL_MS,
-      finished: false
+      qIndex: 0, answers: {}, qStartedAt: startAt,
+      endsAt: startAt + CFG.SELECTION_TOTAL_MS, finished: false
     };
-
     if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
   }
 
@@ -463,13 +491,11 @@ class Game {
         return { ok: false, reason: 'Not in selection' };
       }
     }
-    if (rec.endsAt && Date.now() > rec.endsAt) {
+    if (rec.endsAt && Date.now() > rec.endsAt)
       return { ok: false, reason: 'Your 10 minutes are up' };
-    }
     const order = s.selectionOrder[teamId] || [];
     const qid = order[rec.qIndex];
     if (!qid) return { ok: false, reason: 'No more questions' };
-
     const existing = rec.answers[qid];
     if (!existing || !existing.locked) {
       rec.answers[qid] = { raw: '__skip__', isCorrect: false, pts: 0, at: Date.now(), locked: false, skipped: true };
@@ -535,15 +561,10 @@ class Game {
     const t = this.team(teamId);
     if (!t) return;
     if (yes && t.status === 'disqualified') return;
-
     const s = this.session;
-
     if (yes) {
-      if (s.state === 'SELECTION') {
-        this._addToSelection(teamId);
-      } else {
-        t.status = 'approved';
-      }
+      if (s.state === 'SELECTION') this._addToSelection(teamId);
+      else t.status = 'approved';
     } else {
       t.status = 'registered';
       if (s.state === 'SELECTION') {
@@ -570,16 +591,14 @@ class Game {
     this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
     delete this.session.selectionAnswers[teamId];
     delete this.session.selectionOrder[teamId];
-    if (this.session.activeTeamId === teamId) {
+    if (this.session.activeTeamId === teamId)
       this.session.activeTeamId = this.session.activeTeamIds[0] || null;
-    }
     if (this.session.buzzerLockedByTeamId === teamId) {
       this.session.buzzerLockedByTeamId = null;
       this.session.buzzerLockEndsAt = null;
     }
-    if (this.session.challenge && this.session.challenge.challengerId === teamId) {
+    if (this.session.challenge && this.session.challenge.challengerId === teamId)
       this.session.challenge = null;
-    }
     this.onChange();
     return { ok: true, teamName };
   }
@@ -592,33 +611,27 @@ class Game {
     t.disqualifiedAt = Date.now();
     t.eliminatedInRound = this.session.round || null;
     this.session.activeTeamIds = this.session.activeTeamIds.filter(id => id !== teamId);
-    if (this.session.activeTeamId === teamId) {
+    if (this.session.activeTeamId === teamId)
       this.session.activeTeamId = this.session.activeTeamIds[0] || null;
-    }
     if (this.session.buzzerLockedByTeamId === teamId) {
       this.session.buzzerLockedByTeamId = null;
       this.session.buzzerLockEndsAt = null;
     }
-    if (this.session.challenge && this.session.challenge.challengerId === teamId) {
+    if (this.session.challenge && this.session.challenge.challengerId === teamId)
       this.session.challenge = null;
-    }
     this.onChange();
   }
 
   requalifyTeam(teamId) {
     const t = this.team(teamId);
     if (!t) return { ok: false, reason: 'Team not found' };
-
     const s = this.session;
-
     t.status = 'active';
     t.disqualifiedAt = null;
     t.eliminatedInRound = null;
     t.flags = [];
     t.lastFlagAt = null;
-
     if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
-
     if (s.state === 'SELECTION') {
       const existing = s.selectionAnswers[teamId];
       if (!existing) {
@@ -632,7 +645,6 @@ class Game {
         }
       }
     }
-
     this.onChange();
     return { ok: true, teamName: t.teamName };
   }
@@ -649,7 +661,6 @@ class Game {
     const approved = this.teams.filter(t => t.status === 'approved' || t.status === 'active');
     if (approved.length < CFG.MIN_TEAMS_TO_START)
       return { ok: false, reason: 'Need at least ' + CFG.MIN_TEAMS_TO_START + ' approved teams' };
-
     s.round = 0;
     s.qIndex = 0;
     s.state = 'SELECTION';
@@ -662,20 +673,17 @@ class Game {
     s.currentQuestionId = null;
     s.selectionAnswers = {};
     s.selectionOrder = {};
-
     approved.forEach(t => {
       t.status = 'active';
       t.points.r0 = 0;
       this._addToSelection(t.id);
     });
-
     this.onChange();
     return { ok: true };
   }
 
   qualifyFromSelection() {
     const s = this.session;
-
     const eligible = this.teams
       .filter(t => {
         if (t.status !== 'active') return false;
@@ -686,16 +694,13 @@ class Game {
       .slice()
       .sort((a, b) => (b.points.r0 || 0) - (a.points.r0 || 0)
                    || (a.latency || 0) - (b.latency || 0));
-
     const qualifiers = eligible.slice(0, CFG.SELECTION_QUALIFY);
-
     this.teams.forEach(t => {
       if (t.status === 'active' && !qualifiers.includes(t)) {
         t.status = 'eliminated';
         t.eliminatedInRound = 0;
       }
     });
-
     s.state = 'ROUND_END';
     s.round = 0;
     s.activeTeamIds = qualifiers.map(t => t.id);
@@ -708,14 +713,12 @@ class Game {
     const active = this.teams.filter(t => s.activeTeamIds.includes(t.id));
     if (active.length < CFG.MIN_TEAMS_TO_START)
       return { ok: false, reason: 'Not enough active teams' };
-
     if (n === 1) {
       this.teams.forEach(t => {
         t.points = { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
         t.latency = 0;
       });
     }
-
     s.round = n;
     s.qIndex = 0;
     s.state = 'ROUND_INTRO';
@@ -725,13 +728,9 @@ class Game {
     s.buzzerLockEndsAt = null;
     s.currentQuestionId = null;
     s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
-
     s.optionShuffle = shuffledOptionsMap(this.questions, n);
-
     active.forEach(t => { if (t.status === 'approved') t.status = 'active'; });
-
     this.onChange();
-
     setTimeout(() => {
       if (this.session.state === 'ROUND_INTRO' && this.session.round === n) this.showQuestion();
     }, CFG.ROUND_INTRO_MS);
@@ -742,7 +741,6 @@ class Game {
     const s = this.session;
     const q = this.currentQuestion();
     if (!q) return this.endRound();
-
     s.state = 'QUESTION_ACTIVE';
     s.currentQuestionId = q.id;
     s.questionStartedAt = Date.now();
@@ -757,7 +755,6 @@ class Game {
 
   nextQuestion() {
     const s = this.session;
-
     if (s.round === 0) {
       const qs = this.roundQuestions(0);
       if (s.qIndex + 1 >= qs.length) return this.qualifyFromSelection();
@@ -767,11 +764,9 @@ class Game {
       this.onChange();
       return;
     }
-
     const qs = this.roundQuestions(s.round);
     if (s.qIndex + 1 >= qs.length) return this.endRound();
     s.qIndex += 1;
-
     if (s.round === 3 && s.activeTeamIds.length) {
       const idx = s.activeTeamIds.indexOf(s.activeTeamId);
       s.activeTeamId = s.activeTeamIds[(idx + 1) % s.activeTeamIds.length];
@@ -980,13 +975,10 @@ class Game {
   tick() {
     const s = this.session;
     const n = Date.now();
-
     if (s.state === 'SELECTION') return false;
-
     if (s.state === 'QUESTION_ACTIVE') {
       const q = this.currentQuestion();
       if (!q) return false;
-
       if (s.round === 5 && s.buzzerLockedByTeamId && s.buzzerLockEndsAt && n >= s.buzzerLockEndsAt) {
         const lockedId = s.buzzerLockedByTeamId;
         this.addPoints(lockedId, 5, CFG.R5_WRONG);
@@ -1040,7 +1032,6 @@ function sanitizeForTeam(game, teamId) {
     session: s, questions: game.questions,
     teams: game.teams, answers: game.answers
   }));
-
   if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
     const cq = out.session.currentQuestionId;
     out.questions = out.questions.map(q => {
@@ -1052,9 +1043,7 @@ function sanitizeForTeam(game, teamId) {
       return q;
     });
   }
-
   out.questions = out.questions.map(q => applyOptionShuffle(q, s.optionShuffle[q.id]));
-
   if (s.state === 'SELECTION' && teamId) {
     const myOrder = s.selectionOrder[teamId] || [];
     const selQs = out.questions.filter(q => q.roundNumber === 0);
@@ -1062,15 +1051,12 @@ function sanitizeForTeam(game, teamId) {
     const others = out.questions.filter(q => q.roundNumber !== 0);
     out.questions = [...myQs, ...others];
   }
-
-  // Teams should not see other teams' flags
   out.teams = out.teams.map(t => {
     const copy = { ...t };
     delete copy.flags;
     delete copy.lastFlagAt;
     return copy;
   });
-
   return out;
 }
 
@@ -1080,7 +1066,6 @@ function sanitizeForProjector(game) {
     session: s, questions: game.questions,
     teams: game.teams, answers: game.answers
   }));
-
   if (out.session.state === 'SELECTION') {
     out.questions = out.questions.filter(q => q.roundNumber !== 0);
     delete out.session.selectionAnswers;
@@ -1156,7 +1141,6 @@ function setupSocket(io) {
         return ack && ack({ ok: false, reason: 'This admin is already logged in' });
       if (adminSlotsAvailable() <= 0)
         return ack && ack({ ok: false, reason: 'All admin slots are in use.' });
-
       const otp = generateOtp();
       otpStore.set(admin.mobile, { otp, expiresAt: Date.now() + OTP_TTL_MS });
       console.log('\n╔══════════════════════════════════════╗');
@@ -1229,13 +1213,11 @@ function setupSocket(io) {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
-
         const s = game.session;
         if (s.state === 'SELECTION' && !s.selectionAnswers[teamId] &&
             (t.status === 'active' || t.status === 'approved')) {
           game._addToSelection(teamId);
         }
-
         t.connected = true;
         socketTeam.set(socket.id, teamId);
         socket.data.teamId = teamId;

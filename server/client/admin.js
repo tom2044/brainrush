@@ -568,7 +568,6 @@ const Admin = {
     if (apAll) apAll.onclick = () => this.approveAll();
   },
 
-  /* ---- SELECTION SHEET ---- */
   renderSelectionSheet(c) {
     const db = this.state;
     const s = db.session;

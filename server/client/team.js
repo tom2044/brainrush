@@ -1,9 +1,5 @@
 'use strict';
 
-/* ============================================================
-   BRAINRUSH — Team View
-   ============================================================ */
-
 const Team = {
   state: null,
   teamId: null,
@@ -249,10 +245,10 @@ const Team = {
           DISQUALIFIED
         </h2>
         <p style="color:var(--danger-red);font-weight:600;font-size:16px">
-          You minimized the browser or switched tabs/apps during an active round.
+          You minimized the browser or lost connection for too long during an active round.
         </p>
         <p class="small muted mt">Team: <b>${esc(me.teamName)}</b></p>
-        <p class="small muted">This decision cannot be reversed.</p>
+        <p class="small muted">Ask the admin to requalify you.</p>
       </div>`;
   },
 
@@ -275,12 +271,12 @@ const Team = {
         <div class="reg-card">
           <h2>TEAM REGISTRATION</h2>
           <p class="subtitle">Two students share one device.</p>
-          <div class="field"><label>TEAM NAME</label><input id="tn" placeholder="e.g. Quantum Quokkas" maxlength="40" autocomplete="off" autocapitalize="characters"></div>
+          <div class="field"><label>TEAM NAME</label><input id="tn" placeholder="e.g. QUANTUM QUOKKAS" maxlength="40" autocomplete="off" style="text-transform:uppercase"></div>
           <div class="divider"></div>
-          <div class="field"><label>STUDENT 1 · NAME</label><input id="s1n" autocomplete="off" autocapitalize="characters"></div>
+          <div class="field"><label>STUDENT 1 · NAME</label><input id="s1n" autocomplete="off"></div>
           <div class="field"><label>STUDENT 1 · ROLL</label><input id="s1r" inputmode="numeric" autocomplete="off"></div>
           <div class="divider"></div>
-          <div class="field"><label>STUDENT 2 · NAME</label><input id="s2n" autocomplete="off" autocapitalize="characters"></div>
+          <div class="field"><label>STUDENT 2 · NAME</label><input id="s2n" autocomplete="off"></div>
           <div class="field"><label>STUDENT 2 · ROLL</label><input id="s2r" inputmode="numeric" autocomplete="off"></div>
           <button class="btn primary block mt" id="reg">REGISTER TEAM →</button>
         </div>
@@ -320,14 +316,14 @@ const Team = {
       <h2>📖 INSTRUCTIONS</h2>
       <p class="muted">Read carefully before entering the arena.</p>
       <ul>
-        <li><b>Selection Round:</b> 10 short answers. 10 minutes from when you start. +2 correct, −1 wrong, 0 skip. Tie-break by total time.</li>
-        <li><b>Round 1 — Closest Guess:</b> Exact answer = +10, off by 1 = +9, off by 2 = +8, and so on.</li>
+        <li><b>Selection Round:</b> 10 short answers. 10 minutes from when you start. +2 correct, −1 wrong, 0 skip. Skip does NOT lock — you can go back and submit later. Tie-break by total time.</li>
+        <li><b>Round 1 — Closest Guess:</b> Exact = +10, off by 1 = +9, off by 2 = +8, and so on.</li>
         <li><b>Round 2 — Speed &amp; Accuracy:</b> Fastest correct = +10, next = +8, then +6, +5, +4, +3, +2, +1.</li>
-        <li><b>Round 3 — Challenge Matrix:</b> Turn-based. Correct = +10, steal = +15, failed steal = −5.</li>
-        <li><b>Round 4 — Bonus Rapid-Fire:</b> 10 seconds per question. +10 correct, −5 wrong.</li>
-        <li><b>Round 5 — Grand Finale:</b> Buzzer round. +20 correct, −10 wrong.</li>
-        <li>⚠️ <b>Do not minimize or switch tabs</b> during active rounds — you'll be disqualified.</li>
-        <li>✅ If you face a problem, <b>refresh the page</b> — it's safe.</li>
+        <li><b>Round 3 — Challenge Matrix:</b> Turn-based. +10 correct, +15 steal, −5 failed steal.</li>
+        <li><b>Round 4 — Bonus Rapid-Fire:</b> 10 sec per question. +10 correct, −5 wrong.</li>
+        <li><b>Round 5 — Grand Finale:</b> Buzzer. +20 correct, −10 wrong.</li>
+        <li>⚠️ <b>Do not minimize or switch tabs</b> during active rounds.</li>
+        <li>✅ If you lose internet briefly, wait — you'll reconnect. If disqualified, ask admin to requalify.</li>
       </ul>
       <div class="instr-footer">
         <label class="agree-label">
@@ -343,7 +339,6 @@ const Team = {
 
   /* ---- SELECTION ROUND ---- */
   selection(c, me, s) {
-    // Selection questions are pre-ordered per team by the server
     const allQ = this.state.questions
       .filter(x => x.roundNumber === 0 && x.isActive);
 
@@ -355,12 +350,14 @@ const Team = {
     const q = allQ[rec.qIndex];
     const done = !q;
 
-    // Can re-visit and edit only if not submitted
     const curAnswer = q ? rec.answers[q.id] : null;
-    const isLocked = curAnswer && curAnswer.locked;
+    const isLocked = !!(curAnswer && curAnswer.locked);
 
     const isLast = !done && (rec.qIndex + 1 >= totalQ);
     const canPrev = rec.qIndex > 0;
+
+    // Count only locked answers (submitted)
+    const lockedCount = Object.values(rec.answers || {}).filter(a => a.locked).length;
 
     c.innerHTML = `
       <div class="stage">
@@ -416,7 +413,7 @@ const Team = {
           <h3>YOUR SCORE</h3>
           <div class="flex-between">
             <div><span class="stat"><span class="v">${me.points.r0 || 0}</span><span class="l">Selection points</span></span></div>
-            <div><span class="stat"><span class="v">${Object.keys(rec.answers || {}).length}</span><span class="l">Answered</span></span></div>
+            <div><span class="stat"><span class="v">${lockedCount}</span><span class="l">Locked in</span></span></div>
           </div>
         </div>
       </div>`;
@@ -428,7 +425,6 @@ const Team = {
       const prevBtn = document.getElementById('saqPrev');
       const nextBtn = document.getElementById('saqNext');
 
-      // Force uppercase as user types
       if (input) {
         input.addEventListener('input', () => {
           const start = input.selectionStart;
@@ -436,7 +432,7 @@ const Team = {
           input.value = input.value.toUpperCase();
           try { input.setSelectionRange(start, end); } catch (e) {}
         });
-        // Pre-fill if there was a previous unsaved answer (skip doesn't lock)
+        // Pre-fill if they had a skip (not locked) answer before
         if (curAnswer && !curAnswer.locked && curAnswer.raw && curAnswer.raw !== '__skip__') {
           input.value = String(curAnswer.raw).toUpperCase();
         }

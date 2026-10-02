@@ -55,7 +55,6 @@ const Admin = {
     if (a.answers.length !== b.answers.length) return false;
     if (a.questions.length !== b.questions.length) return false;
     if ((sa.questionEndsAt || 0) !== (sb.questionEndsAt || 0)) return false;
-    // compare each team's status + total
     for (let i = 0; i < a.teams.length; i++) {
       const ta = a.teams[i], tb = b.teams[i];
       if (!tb || ta.id !== tb.id) return false;
@@ -111,6 +110,13 @@ const Admin = {
     Socket.emit('admin:deleteTeam', { teamId }, (r) => {
       if (r && !r.ok) toast('⚠ ' + (r.reason || 'Delete failed'));
       else toast('✓ Team removed');
+    });
+  },
+  requalifyTeam(teamId) {
+    if (!confirm('Put this team back into the live round? Their progress will be preserved.')) return;
+    Socket.emit('admin:requalifyTeam', { teamId }, (r) => {
+      if (r && !r.ok) toast('⚠ ' + (r.reason || 'Failed'));
+      else toast('✓ ' + (r.teamName || 'Team') + ' rejoined');
     });
   },
   sendToInstructions()    { Socket.emit('admin:sendToInstructions'); },
@@ -325,7 +331,7 @@ const Admin = {
         let n = 0;
         const sa = s.selectionAnswers || {};
         Object.keys(sa).forEach(tid => {
-          if (Object.keys(sa[tid].answers || {}).length > 0) n++;
+          if (Object.values(sa[tid].answers || {}).filter(a => a.locked).length > 0) n++;
         });
         return n;
       })();
@@ -490,6 +496,7 @@ const Admin = {
           <div class="row-actions">
             ${t.status === 'registered' ? `<button class="btn sm good" data-ap="${t.id}">APPROVE</button>` : ''}
             ${(t.status === 'approved' || t.status === 'active') ? `<button class="btn sm ghost" data-rv="${t.id}">REVOKE</button>` : ''}
+            ${(t.status === 'disqualified' || t.status === 'eliminated') ? `<button class="btn sm primary" data-rq="${t.id}">↩ REJOIN</button>` : ''}
             <button class="btn sm bad" data-del="${t.id}">DELETE</button>
           </div>
         </div>`;
@@ -517,6 +524,8 @@ const Admin = {
       el.onclick = () => this.approve(el.dataset.ap, true));
     document.querySelectorAll('[data-rv]').forEach(el =>
       el.onclick = () => this.approve(el.dataset.rv, false));
+    document.querySelectorAll('[data-rq]').forEach(el =>
+      el.onclick = () => this.requalifyTeam(el.dataset.rq));
     document.querySelectorAll('[data-del]').forEach(el =>
       el.onclick = () => this.deleteTeam(el.dataset.del));
     const apAll = document.getElementById('apAll');
@@ -627,7 +636,7 @@ const Admin = {
         </div>`;
       } else if (t === 'saq') {
         f.innerHTML = `<div class="field">
-          <label>CORRECT ANSWER (case-insensitive, will be uppercased)</label>
+          <label>CORRECT ANSWER (case-insensitive, auto-uppercase)</label>
           <input id="qea" type="text" value="${esc(q.correctAnswer == null ? '' : q.correctAnswer)}"
                  placeholder="e.g. NEWTON" autocomplete="off" maxlength="60" style="text-transform:uppercase">
         </div>`;

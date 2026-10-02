@@ -16,24 +16,15 @@ const CFG = {
   MIN_TEAMS_TO_START: 2,
 
   SELECTION_Q_COUNT: 10,
-  SELECTION_TOTAL_MS: 10 * 60 * 1000,     // 10 min per team
+  SELECTION_TOTAL_MS: 10 * 60 * 1000,
   SELECTION_CORRECT: 2,
   SELECTION_WRONG: -1,
   SELECTION_QUALIFY: 10,
 
-  // R1 — exact +0 = +10, off by 1 = +9 ... off by 9+ = +1
   R1_SCALE: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-
-  // R2 — speed MCQ
   R2_SCALE: [10, 8, 6, 5, 4, 3, 2, 1, 1, 1],
-
-  // R3 — challenge matrix
   R3_CORRECT: 10, R3_STEAL: 15, R3_FAIL: -5,
-
-  // R4 — rapid fire
   R4_CORRECT: 10, R4_WRONG: -5,
-
-  // R5 — grand finale
   R5_CORRECT: 20, R5_WRONG: -10,
 
   REVEAL_MS: 4000, BUZZ_WINDOW_MS: 8000, CHALLENGE_MS: 10000,
@@ -41,7 +32,7 @@ const CFG = {
 
   ROUND_CUTS: { 1: 2, 2: 2, 3: 2, 4: 2 },
 
-  DISQUALIFY_GRACE_MS: 2000,
+  DISQUALIFY_GRACE_MS: 5000,
 };
 
 /* ============================================================
@@ -81,7 +72,6 @@ function pruneStaleSessions() {
 }
 setInterval(pruneStaleSessions, 10000);
 
-/* ---- helpers ---- */
 function normalizeAnswer(s) {
   return String(s == null ? '' : s).toUpperCase().trim();
 }
@@ -211,9 +201,8 @@ function seedQuestions() {
 }
 
 /* ============================================================
-   SHUFFLE HELPERS
+   OPTION SHUFFLE (per round, same for all teams)
    ============================================================ */
-// Apply per-round option shuffle for MCQ rounds (2,3,4,5) — same shuffle for all teams
 function shuffledOptionsMap(questions, round) {
   const map = {};
   if (round === 0 || round === 1) return map;
@@ -223,8 +212,8 @@ function shuffledOptionsMap(questions, round) {
       const idx = [0, 1, 2, 3];
       const shuf = shuffleArr(idx);
       map[q.id] = {
-        order: shuf,                          // shuf[newIdx] = oldIdx
-        correctAnswer: shuf.indexOf(q.correctAnswer)   // new correct index
+        order: shuf,
+        correctAnswer: shuf.indexOf(q.correctAnswer)
       };
     });
   return map;
@@ -259,8 +248,8 @@ class Game {
       challenge: null,
       lastReveal: null,
       instructionsEndsAt: null,
-      optionShuffle: {},        // questionId -> { order, correctAnswer }
-      selectionOrder: {},       // teamId -> [qIds in shuffled order]
+      optionShuffle: {},
+      selectionOrder: {}
     };
   }
 
@@ -322,8 +311,6 @@ class Game {
     /* ===== SELECTION ROUND ===== */
     if (s.state === 'SELECTION') {
       let rec = s.selectionAnswers[teamId];
-
-      // Auto-add if approved but not yet in round
       if (!rec) {
         const t0 = this.team(teamId);
         if (t0 && (t0.status === 'active' || t0.status === 'approved')) {
@@ -334,17 +321,16 @@ class Game {
         }
       }
 
-      // Time's up?
       if (rec.endsAt && Date.now() > rec.endsAt) {
         return { ok: false, reason: 'Your 10 minutes are up' };
       }
 
-      // Locked already?
-      if (rec.answers[questionId] != null) {
+      // Locked already? (only blocks truly submitted answers, not skips)
+      const existing = rec.answers[questionId];
+      if (existing && existing.locked) {
         return { ok: false, reason: 'Already answered' };
       }
 
-      // Is this one of MY shuffled questions?
       const myOrder = s.selectionOrder[teamId] || [];
       const myQ = this.questions.find(q => q.id === questionId);
       if (!myQ || myOrder.indexOf(questionId) === -1) {
@@ -357,6 +343,7 @@ class Game {
 
       const pts = ok ? CFG.SELECTION_CORRECT : CFG.SELECTION_WRONG;
 
+      // If they had a skip entry before, subtract 0 (skip was already 0 pts)
       rec.answers[questionId] = { raw: norm, isCorrect: ok, pts, at: answeredAt, locked: true };
 
       const t = this.team(teamId);
@@ -373,6 +360,10 @@ class Game {
         isCorrect: ok, pointsAwarded: pts,
         wasChallenge: false, guessDelta: null, wasSkip: false
       });
+
+      // Auto-advance to next question
+      rec.qIndex += 1;
+      rec.qStartedAt = Date.now();
 
       return { ok: true, privateUpdate: true };
     }
@@ -393,12 +384,11 @@ class Game {
     if (s.round === 5 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
 
-    // Un-shuffle the answer for MCQ rounds 2–5
+    // Un-shuffle MCQ answer back to original index
     let submittedAnswer = answer;
     if (q.type === 'mcq' && s.optionShuffle[q.id]) {
       const shuf = s.optionShuffle[q.id];
-      // team sends the index in THEIR shuffled view (which = server's shuffled view since options shuffle is same for all)
-      submittedAnswer = shuf.order[answer];   // map back to original index
+      submittedAnswer = shuf.order[answer];
     }
 
     const receivedAt = Date.now();
@@ -429,18 +419,18 @@ class Game {
     return { ok: true };
   }
 
-  /* Add a team to the currently running selection round */
   _addToSelection(teamId) {
     const s = this.session;
     if (s.state !== 'SELECTION') return;
-    if (s.selectionAnswers[teamId]) return;
 
     const t = this.team(teamId);
     if (!t) return;
     t.status = 'active';
     t.points.r0 = 0;
+    t.latency = 0;
 
-    // Per-team shuffled question order
+    delete s.selectionAnswers[teamId];
+
     const baseOrder = this.roundQuestions(0).map(q => q.id);
     const myOrder = shuffleArr(baseOrder);
     s.selectionOrder[teamId] = myOrder;
@@ -457,7 +447,7 @@ class Game {
     if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
   }
 
-  /* ---- SELECTION: SKIP (doesn't lock answer permanently — just moves on) ---- */
+  /* ---- SKIP (marks 0 pts, does NOT lock; can come back and submit) ---- */
   skipSelectionQuestion({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -478,8 +468,8 @@ class Game {
     const qid = order[rec.qIndex];
     if (!qid) return { ok: false, reason: 'No more questions' };
 
-    // Skip only marks it as "seen but not answered" — 0 points, no lock on re-entry
-    if (rec.answers[qid] == null) {
+    const existing = rec.answers[qid];
+    if (!existing || !existing.locked) {
       rec.answers[qid] = { raw: '__skip__', isCorrect: false, pts: 0, at: Date.now(), locked: false, skipped: true };
     }
     rec.qIndex += 1;
@@ -591,6 +581,7 @@ class Game {
     this.onChange();
     return { ok: true, teamName };
   }
+
   disqualifyTeam(teamId) {
     const t = this.team(teamId);
     if (!t) return;
@@ -610,6 +601,37 @@ class Game {
       this.session.challenge = null;
     }
     this.onChange();
+  }
+
+  /* Requalify a disqualified team — keeps their progress, extends their time */
+  requalifyTeam(teamId) {
+    const t = this.team(teamId);
+    if (!t) return { ok: false, reason: 'Team not found' };
+
+    const s = this.session;
+
+    t.status = 'active';
+    t.disqualifiedAt = null;
+    t.eliminatedInRound = null;
+
+    if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
+
+    if (s.state === 'SELECTION') {
+      const existing = s.selectionAnswers[teamId];
+      if (!existing) {
+        this._addToSelection(teamId);
+      } else {
+        const now = Date.now();
+        if (existing.endsAt && existing.endsAt < now) {
+          existing.endsAt = now + 5 * 60 * 1000;
+        } else if (existing.endsAt) {
+          existing.endsAt += 2 * 60 * 1000;
+        }
+      }
+    }
+
+    this.onChange();
+    return { ok: true, teamName: t.teamName };
   }
 
   sendToInstructions() {
@@ -651,7 +673,6 @@ class Game {
   qualifyFromSelection() {
     const s = this.session;
 
-    // Eligible = active + answered ≥ 1 question
     const eligible = this.teams
       .filter(t => {
         if (t.status !== 'active') return false;
@@ -685,7 +706,6 @@ class Game {
     if (active.length < CFG.MIN_TEAMS_TO_START)
       return { ok: false, reason: 'Not enough active teams' };
 
-    // Reset every team's total to 0 — R1 starts fresh
     if (n === 1) {
       this.teams.forEach(t => {
         t.points = { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
@@ -703,7 +723,6 @@ class Game {
     s.currentQuestionId = null;
     s.activeTeamId = n === 3 ? s.activeTeamIds[0] : null;
 
-    // Shuffle options for MCQ rounds (2,3,4,5) — same for all teams
     s.optionShuffle = shuffledOptionsMap(this.questions, n);
 
     active.forEach(t => { if (t.status === 'approved') t.status = 'active'; });
@@ -810,7 +829,6 @@ class Game {
     this.onChange();
   }
 
-  /* CLEAR ALL — teams + answers, keeps questions */
   clearAll() {
     this.session = this.blankSession();
     this.teams = [];
@@ -818,7 +836,6 @@ class Game {
     this.onChange();
   }
 
-  /* ---- EVALUATORS ---- */
   evalR1() {
     const q = this.currentQuestion();
     const answers = this.answers.filter(a => a.questionId === q.id);
@@ -961,7 +978,7 @@ class Game {
     const n = Date.now();
 
     if (s.state === 'SELECTION') {
-      return false;   // admin ends manually
+      return false;
     }
 
     if (s.state === 'QUESTION_ACTIVE') {
@@ -1022,7 +1039,6 @@ function sanitizeForTeam(game, teamId) {
     teams: game.teams, answers: game.answers
   }));
 
-  // Hide correct answer during live question
   if (out.session.state === 'QUESTION_ACTIVE' && out.session.round !== 0) {
     const cq = out.session.currentQuestionId;
     out.questions = out.questions.map(q => {
@@ -1035,13 +1051,10 @@ function sanitizeForTeam(game, teamId) {
     });
   }
 
-  // Apply option shuffle to all MCQ rounds
   out.questions = out.questions.map(q => applyOptionShuffle(q, s.optionShuffle[q.id]));
 
-  // Apply per-team shuffle to Selection questions
-  if (s.state === 'SELECTION') {
+  if (s.state === 'SELECTION' && teamId) {
     const myOrder = s.selectionOrder[teamId] || [];
-    // Reorder round-0 questions to my order
     const selQs = out.questions.filter(q => q.roundNumber === 0);
     const myQs = myOrder.map(id => selQs.find(q => q.id === id)).filter(Boolean);
     const others = out.questions.filter(q => q.roundNumber !== 0);
@@ -1097,8 +1110,6 @@ function setupSocket(io) {
   function broadcast() {
     io.to('admin').emit('state', snapshotAdmin(game));
     io.to('projector').emit('state', sanitizeForProjector(game));
-
-    // Teams get their own version
     for (const [socketId, tid] of socketTeam.entries()) {
       const sock = io.sockets.sockets.get(socketId);
       if (sock) sock.emit('state', sanitizeForTeam(game, tid));
@@ -1218,7 +1229,6 @@ function setupSocket(io) {
         const t = game.team(teamId);
         cancelPendingDisq(teamId);
 
-        // Auto-add to running selection round
         const s = game.session;
         if (s.state === 'SELECTION' && !s.selectionAnswers[teamId] &&
             (t.status === 'active' || t.status === 'approved')) {
@@ -1335,6 +1345,10 @@ function setupSocket(io) {
     socket.on('admin:approveAll',         adminGuard(() => game.approveAll()));
     socket.on('admin:deleteTeam',         adminGuard(({ teamId }, ack) => {
       const r = game.deleteTeam(teamId);
+      ack && ack(r);
+    }));
+    socket.on('admin:requalifyTeam',      adminGuard(({ teamId }, ack) => {
+      const r = game.requalifyTeam(teamId);
       ack && ack(r);
     }));
     socket.on('admin:sendToInstructions', adminGuard(() => game.sendToInstructions()));

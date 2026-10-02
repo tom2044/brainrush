@@ -123,18 +123,34 @@ const Team = {
       try { sessionStorage.removeItem('brainrush:refreshing'); } catch (e) {}
     }, 500);
 
-    const report = () => {
+    const report = (reason) => {
       try { if (sessionStorage.getItem('brainrush:refreshing')) return; } catch (e) {}
       if (!this.state) return;
       const s = this.state.session;
       const me = this.myTeam();
       if (!me || me.status !== 'active') return;
-      if (s.state !== 'QUESTION_ACTIVE' && s.state !== 'ROUND_INTRO') return;
-      Socket.emit('team:visibilityLost', {});
+      Socket.emit('team:visibilityLost', { reason });
     };
 
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) report();
+      if (document.hidden) report('tab_hidden');
+      else report('tab_visible');
+    });
+
+    window.addEventListener('blur', () => report('window_blur'));
+    window.addEventListener('focus', () => report('window_focus'));
+
+    document.addEventListener('keydown', (e) => {
+      const k = (e.key || '').toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'v' || k === 'x' || k === 'p')) {
+        Socket.emit('team:suspicious', { reason: 'shortcut_' + k });
+      }
+      if (k === 'printscreen') {
+        Socket.emit('team:suspicious', { reason: 'printscreen' });
+      }
+      if (k === 'f12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && (k === 'i' || k === 'j'))) {
+        Socket.emit('team:suspicious', { reason: 'devtools_attempt' });
+      }
     });
   },
 
@@ -245,10 +261,10 @@ const Team = {
           DISQUALIFIED
         </h2>
         <p style="color:var(--danger-red);font-weight:600;font-size:16px">
-          You minimized the browser or lost connection for too long during an active round.
+          The admin disqualified your team.
         </p>
         <p class="small muted mt">Team: <b>${esc(me.teamName)}</b></p>
-        <p class="small muted">Ask the admin to requalify you.</p>
+        <p class="small muted">Contact the organizers.</p>
       </div>`;
   },
 
@@ -316,14 +332,14 @@ const Team = {
       <h2>📖 INSTRUCTIONS</h2>
       <p class="muted">Read carefully before entering the arena.</p>
       <ul>
-        <li><b>Selection Round:</b> 10 short answers. 10 minutes from when you start. +2 correct, −1 wrong, 0 skip. Skip does NOT lock — you can go back and submit later. Tie-break by total time.</li>
-        <li><b>Round 1 — Closest Guess:</b> Exact = +10, off by 1 = +9, off by 2 = +8, and so on.</li>
-        <li><b>Round 2 — Speed &amp; Accuracy:</b> Fastest correct = +10, next = +8, then +6, +5, +4, +3, +2, +1.</li>
-        <li><b>Round 3 — Challenge Matrix:</b> Turn-based. +10 correct, +15 steal, −5 failed steal.</li>
-        <li><b>Round 4 — Bonus Rapid-Fire:</b> 10 sec per question. +10 correct, −5 wrong.</li>
+        <li><b>Selection Round:</b> 10 short answers. 10 minutes from when you start. +2 correct, −1 wrong, 0 skip. Skip does NOT lock — you can go back and submit later.</li>
+        <li><b>Round 1 — Closest Guess:</b> Exact = +10, off by 1 = +9, and so on.</li>
+        <li><b>Round 2 — Speed &amp; Accuracy:</b> Fastest correct wins the most points.</li>
+        <li><b>Round 3 — Challenge Matrix:</b> Turn-based. Correct = +10, steal = +15, failed steal = −5.</li>
+        <li><b>Round 4 — Bonus Rapid-Fire:</b> 10 sec each. +10 correct, −5 wrong.</li>
         <li><b>Round 5 — Grand Finale:</b> Buzzer. +20 correct, −10 wrong.</li>
         <li>⚠️ <b>Do not minimize or switch tabs</b> during active rounds.</li>
-        <li>✅ If you lose internet briefly, wait — you'll reconnect. If disqualified, ask admin to requalify.</li>
+        <li>✅ If you lose internet briefly, wait — you'll reconnect.</li>
       </ul>
       <div class="instr-footer">
         <label class="agree-label">
@@ -337,7 +353,6 @@ const Team = {
     if (cb && !me.instructionsAck) cb.onchange = () => { if (cb.checked) Team.ackInstructions(); };
   },
 
-  /* ---- SELECTION ROUND ---- */
   selection(c, me, s) {
     const allQ = this.state.questions
       .filter(x => x.roundNumber === 0 && x.isActive);
@@ -356,7 +371,6 @@ const Team = {
     const isLast = !done && (rec.qIndex + 1 >= totalQ);
     const canPrev = rec.qIndex > 0;
 
-    // Count only locked answers (submitted)
     const lockedCount = Object.values(rec.answers || {}).filter(a => a.locked).length;
 
     c.innerHTML = `
@@ -432,7 +446,6 @@ const Team = {
           input.value = input.value.toUpperCase();
           try { input.setSelectionRange(start, end); } catch (e) {}
         });
-        // Pre-fill if they had a skip (not locked) answer before
         if (curAnswer && !curAnswer.locked && curAnswer.raw && curAnswer.raw !== '__skip__') {
           input.value = String(curAnswer.raw).toUpperCase();
         }

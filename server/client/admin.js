@@ -60,6 +60,9 @@ const Admin = {
       if (!tb || ta.id !== tb.id) return false;
       if (ta.status !== tb.status) return false;
       if ((ta.points.total || 0) !== (tb.points.total || 0)) return false;
+      const fa = (ta.flags || []).length;
+      const fb = (tb.flags || []).length;
+      if (fa !== fb) return false;
     }
     return true;
   },
@@ -119,6 +122,27 @@ const Admin = {
       else toast('✓ ' + (r.teamName || 'Team') + ' rejoined');
     });
   },
+  disqualifyTeam(teamId) {
+    const t = this.state.teams.find(x => x.id === teamId);
+    if (!t) return;
+    if (!confirm('Manually disqualify ' + t.teamName + '?')) return;
+    Socket.emit('admin:disqualifyTeam', { teamId }, () => {
+      toast('✓ ' + t.teamName + ' disqualified');
+    });
+  },
+  showFlags(teamId) {
+    const t = this.state.teams.find(x => x.id === teamId);
+    if (!t) return;
+    const flags = t.flags || [];
+    if (!flags.length) return alert(t.teamName + ': no flags.');
+
+    const lines = flags.slice().reverse().map(f => {
+      const time = new Date(f.at).toLocaleTimeString();
+      return `${time}  ·  ${f.reason}  (${f.state}${f.round ? ' R' + f.round : ''})`;
+    }).join('\n');
+
+    alert(`⚠ ${t.teamName} — ${flags.length} flag(s)\n\n${lines}`);
+  },
   sendToInstructions()    { Socket.emit('admin:sendToInstructions'); },
   closeInstructions()     { Socket.emit('admin:closeInstructions'); },
   startSelection()        { Socket.emit('admin:startSelection', {}, (r) => {
@@ -126,7 +150,7 @@ const Admin = {
                             }); },
   qualifySelection()      { Socket.emit('admin:qualifySelection', {}, (r) => {
                               if (r && r.ok) {
-                                if (r.qualified < 2) toast('⚠ Only ' + r.qualified + ' team(s) qualified — not enough for Round 1');
+                                if (r.qualified < 2) toast('⚠ Only ' + r.qualified + ' team(s) qualified');
                                 else toast('✓ ' + r.qualified + ' teams qualified');
                               }
                               else if (r) toast('⚠ ' + (r.reason || 'Failed'));
@@ -193,6 +217,7 @@ const Admin = {
           <div class="tabs">
             <button class="tab ${this.tab === 'control' ? 'active' : ''}" data-tab="control">🎮 CONTROL</button>
             <button class="tab ${this.tab === 'teams' ? 'active' : ''}" data-tab="teams">👥 TEAMS (${db.teams.length})</button>
+            <button class="tab ${this.tab === 'selection' ? 'active' : ''}" data-tab="selection">🎯 SELECTION</button>
             <button class="tab ${this.tab === 'bank' ? 'active' : ''}" data-tab="bank">📚 Q-BANK (${db.questions.length})</button>
             <button class="tab ${this.tab === 'board' ? 'active' : ''}" data-tab="board">🏆 BOARD</button>
           </div>
@@ -211,6 +236,7 @@ const Admin = {
     if (!c) return;
     if (this.tab === 'control') this.renderControl(c);
     else if (this.tab === 'teams') this.renderTeams(c);
+    else if (this.tab === 'selection') this.renderSelectionSheet(c);
     else if (this.tab === 'bank') this.renderBank(c);
     else if (this.tab === 'board') this.renderBoard(c);
   },
@@ -302,7 +328,6 @@ const Admin = {
     }, 100);
   },
 
-  /* ---- Control tab ---- */
   renderControl(c) {
     const db = this.state;
     const s = db.session;
@@ -486,16 +511,23 @@ const Admin = {
       if (t.status === 'eliminated')   tag = `<span class="tag out">Out R${t.eliminatedInRound == null ? '?' : t.eliminatedInRound}</span>`;
       if (t.status === 'disqualified') tag = '<span class="tag out" style="background:rgba(255,71,87,.3);color:#fff">DISQ</span>';
       if (t.status === 'winner')       tag = `<span class="tag ok">#${t.finalRank || '?'}</span>`;
+
+      const flagCount = (t.flags || []).length;
+      const flagBadge = flagCount > 0
+        ? `<span class="tag out" style="background:rgba(255,71,87,.25);color:#ff8c9a;cursor:pointer;margin-left:6px" data-flags="${t.id}">⚠ ${flagCount} flag${flagCount === 1 ? '' : 's'}</span>`
+        : '';
+
       return `
         <div class="team-row ${t.status !== 'registered' ? 'approved' : ''} ${t.status === 'eliminated' ? 'eliminated' : ''} ${t.status === 'disqualified' ? 'disqualified' : ''}">
-          <div>
-            <div class="name">${esc(t.teamName)}</div>
+          <div style="flex:1;min-width:0">
+            <div class="name">${esc(t.teamName)} ${flagBadge}</div>
             <div class="roll">${esc(t.students[0].name)} (${esc(t.students[0].rollNumber)}) · ${esc(t.students[1].name)} (${esc(t.students[1].rollNumber)})</div>
           </div>
           ${tag}
           <div class="row-actions">
             ${t.status === 'registered' ? `<button class="btn sm good" data-ap="${t.id}">APPROVE</button>` : ''}
             ${(t.status === 'approved' || t.status === 'active') ? `<button class="btn sm ghost" data-rv="${t.id}">REVOKE</button>` : ''}
+            ${(t.status === 'active') ? `<button class="btn sm bad" data-dq="${t.id}">DISQUALIFY</button>` : ''}
             ${(t.status === 'disqualified' || t.status === 'eliminated') ? `<button class="btn sm primary" data-rq="${t.id}">↩ REJOIN</button>` : ''}
             <button class="btn sm bad" data-del="${t.id}">DELETE</button>
           </div>
@@ -526,10 +558,130 @@ const Admin = {
       el.onclick = () => this.approve(el.dataset.rv, false));
     document.querySelectorAll('[data-rq]').forEach(el =>
       el.onclick = () => this.requalifyTeam(el.dataset.rq));
+    document.querySelectorAll('[data-dq]').forEach(el =>
+      el.onclick = () => this.disqualifyTeam(el.dataset.dq));
+    document.querySelectorAll('[data-flags]').forEach(el =>
+      el.onclick = () => this.showFlags(el.dataset.flags));
     document.querySelectorAll('[data-del]').forEach(el =>
       el.onclick = () => this.deleteTeam(el.dataset.del));
     const apAll = document.getElementById('apAll');
     if (apAll) apAll.onclick = () => this.approveAll();
+  },
+
+  /* ---- SELECTION SHEET ---- */
+  renderSelectionSheet(c) {
+    const db = this.state;
+    const s = db.session;
+
+    const selectionQuestions = db.questions
+      .filter(q => q.roundNumber === 0 && q.isActive)
+      .sort((a, b) => a.order - b.order);
+
+    const selectionTeams = db.teams.filter(t => {
+      if (t.status === 'eliminated' && t.eliminatedInRound === 0) return true;
+      if (t.status === 'active' || t.status === 'disqualified') return true;
+      if (s.selectionAnswers && s.selectionAnswers[t.id]) return true;
+      return false;
+    });
+
+    const header = `
+      <div class="card mb">
+        <h3>SELECTION ROUND — FULL ANSWER SHEET</h3>
+        <p class="muted small">
+          ${selectionQuestions.length} questions · ${selectionTeams.length} teams participated
+          ${s.state === 'SELECTION' ? ' · <b style="color:var(--acid-green)">ROUND LIVE</b>' : ''}
+        </p>
+      </div>`;
+
+    let summaryRows = '';
+    selectionTeams.forEach(t => {
+      const rec = (s.selectionAnswers || {})[t.id];
+      const answers = rec ? rec.answers : {};
+      const lockedCount = Object.values(answers).filter(a => a.locked).length;
+      const correct = Object.values(answers).filter(a => a.locked && a.isCorrect).length;
+      const wrong = Object.values(answers).filter(a => a.locked && !a.isCorrect && a.raw !== '__skip__').length;
+      const skipped = Object.values(answers).filter(a => a.locked && a.raw === '__skip__').length;
+      const timeLeft = rec && rec.endsAt ? Math.max(0, Math.ceil((rec.endsAt - Date.now()) / 1000)) : 0;
+      const flagCount = (t.flags || []).length;
+
+      let status = t.status;
+      if (t.status === 'eliminated' && t.eliminatedInRound === 0) status = 'did not qualify';
+      if (t.status === 'active' && s.state === 'SELECTION') status = 'in play';
+
+      summaryRows += `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:10px 0"><b>${esc(t.teamName)}</b></td>
+          <td style="font-family:monospace;padding:10px 0">${t.points.r0 || 0}</td>
+          <td style="padding:10px 0"><span style="color:var(--acid-green)">${correct}✓</span> / <span style="color:var(--danger-red)">${wrong}✗</span> / <span class="muted">${skipped}skip</span></td>
+          <td style="padding:10px 0">${lockedCount}/${selectionQuestions.length}</td>
+          <td style="font-family:monospace;padding:10px 0">${fmtClock(timeLeft)}</td>
+          <td style="padding:10px 0">${flagCount ? '<span style="color:var(--danger-red)">⚠ ' + flagCount + '</span>' : '—'}</td>
+          <td style="padding:10px 0">${esc(status)}</td>
+        </tr>`;
+    });
+
+    let questionBlocks = '';
+    selectionQuestions.forEach((q, qi) => {
+      const rows = selectionTeams.map(t => {
+        const rec = (s.selectionAnswers || {})[t.id];
+        const a = rec && rec.answers ? rec.answers[q.id] : null;
+        let cell = '<span class="muted">—</span>';
+        if (a) {
+          if (!a.locked) {
+            cell = '<span style="color:var(--warn-yellow)">(not submitted)</span>';
+          } else if (a.raw === '__skip__') {
+            cell = '<span class="muted">skipped</span>';
+          } else {
+            const cls = a.isCorrect ? 'style="color:var(--acid-green);font-weight:700"' : 'style="color:var(--danger-red)"';
+            cell = `<span ${cls}>${esc(String(a.raw))}</span> <span class="muted small">(${a.pts > 0 ? '+' : ''}${a.pts})</span>`;
+          }
+        }
+        return `<tr style="border-bottom:1px solid rgba(184,196,214,.08)">
+          <td style="padding:8px 0">${esc(t.teamName)}</td>
+          <td style="padding:8px 0">${cell}</td>
+        </tr>`;
+      }).join('');
+
+      questionBlocks += `
+        <div class="card mb">
+          <h3 style="margin:0 0 6px">Q${qi + 1} · ${esc(q.text)}</h3>
+          <p class="small" style="margin:0 0 12px">Correct answer: <b style="color:var(--acid-green)">${esc(q.correctAnswer)}</b></p>
+          <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:6px 0;color:var(--mut);font-weight:600;width:40%">Team</th>
+                <th style="text-align:left;padding:6px 0;color:var(--mut);font-weight:600">Answer</th>
+              </tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="2" class="muted small">No teams</td></tr>'}</tbody>
+          </table>
+        </div>`;
+    });
+
+    c.innerHTML = `
+      ${header}
+      <div class="card mb">
+        <h3>TEAM SUMMARY</h3>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:14px;min-width:700px">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Team</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Points</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Result</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Locked</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Time left</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Flags</th>
+                <th style="text-align:left;padding:8px 0;color:var(--mut);font-weight:600">Status</th>
+              </tr>
+            </thead>
+            <tbody>${summaryRows || '<tr><td colspan="7" class="muted small">No teams participated</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card mb"><h3>PER-QUESTION BREAKDOWN</h3></div>
+      ${questionBlocks || '<p class="muted small">No selection questions.</p>'}
+    `;
   },
 
   renderBank(c) {

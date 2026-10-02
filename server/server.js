@@ -31,8 +31,6 @@ const CFG = {
   INSTR_SEC: 300, ROUND_INTRO_MS: 3000, TICK_MS: 200,
 
   ROUND_CUTS: { 1: 2, 2: 2, 3: 2, 4: 2 },
-
-  DISQUALIFY_GRACE_MS: 5000,
 };
 
 /* ============================================================
@@ -200,9 +198,6 @@ function seedQuestions() {
   return out;
 }
 
-/* ============================================================
-   OPTION SHUFFLE (per round, same for all teams)
-   ============================================================ */
 function shuffledOptionsMap(questions, round) {
   const map = {};
   if (round === 0 || round === 1) return map;
@@ -292,7 +287,8 @@ class Game {
       id: uuid(), teamName, students, status: 'registered',
       points: { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 },
       latency: 0, eliminatedInRound: null, finalRank: null,
-      instructionsAck: false, joinedAt: Date.now(), connected: true
+      instructionsAck: false, joinedAt: Date.now(), connected: true,
+      flags: [], lastFlagAt: null
     };
     this.teams.push(team);
     this.onChange();
@@ -304,11 +300,24 @@ class Game {
     if (t) { t.instructionsAck = true; this.onChange(); }
   }
 
-  /* ---- SUBMIT ANSWER ---- */
+  addFlag(teamId, reason) {
+    const t = this.team(teamId);
+    if (!t) return;
+    t.flags = t.flags || [];
+    t.flags.push({
+      at: Date.now(),
+      reason: String(reason || 'unknown').slice(0, 40),
+      round: this.session.round,
+      state: this.session.state
+    });
+    if (t.flags.length > 50) t.flags = t.flags.slice(-50);
+    t.lastFlagAt = Date.now();
+    this.onChange();
+  }
+
   submitAnswer({ teamId, questionId, answer }) {
     const s = this.session;
 
-    /* ===== SELECTION ROUND ===== */
     if (s.state === 'SELECTION') {
       let rec = s.selectionAnswers[teamId];
       if (!rec) {
@@ -325,7 +334,6 @@ class Game {
         return { ok: false, reason: 'Your 10 minutes are up' };
       }
 
-      // Locked already? (only blocks truly submitted answers, not skips)
       const existing = rec.answers[questionId];
       if (existing && existing.locked) {
         return { ok: false, reason: 'Already answered' };
@@ -340,10 +348,8 @@ class Game {
       const answeredAt = Date.now();
       const norm = normalizeAnswer(answer);
       const ok = norm === myQ.correctAnswer;
-
       const pts = ok ? CFG.SELECTION_CORRECT : CFG.SELECTION_WRONG;
 
-      // If they had a skip entry before, subtract 0 (skip was already 0 pts)
       rec.answers[questionId] = { raw: norm, isCorrect: ok, pts, at: answeredAt, locked: true };
 
       const t = this.team(teamId);
@@ -361,14 +367,12 @@ class Game {
         wasChallenge: false, guessDelta: null, wasSkip: false
       });
 
-      // Auto-advance to next question
       rec.qIndex += 1;
       rec.qStartedAt = Date.now();
 
       return { ok: true, privateUpdate: true };
     }
 
-    /* ===== OTHER ROUNDS (1–5) ===== */
     if (s.state !== 'QUESTION_ACTIVE') return { ok: false, reason: 'Not accepting' };
     const q = this.currentQuestion();
     if (!q || q.id !== questionId) return { ok: false, reason: 'Stale question' };
@@ -384,7 +388,6 @@ class Game {
     if (s.round === 5 && s.buzzerLockedByTeamId !== teamId)
       return { ok: false, reason: 'Buzzer not yours' };
 
-    // Un-shuffle MCQ answer back to original index
     let submittedAnswer = answer;
     if (q.type === 'mcq' && s.optionShuffle[q.id]) {
       const shuf = s.optionShuffle[q.id];
@@ -447,7 +450,6 @@ class Game {
     if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
   }
 
-  /* ---- SKIP (marks 0 pts, does NOT lock; can come back and submit) ---- */
   skipSelectionQuestion({ teamId }) {
     const s = this.session;
     if (s.state !== 'SELECTION') return { ok: false };
@@ -603,7 +605,6 @@ class Game {
     this.onChange();
   }
 
-  /* Requalify a disqualified team — keeps their progress, extends their time */
   requalifyTeam(teamId) {
     const t = this.team(teamId);
     if (!t) return { ok: false, reason: 'Team not found' };
@@ -613,6 +614,8 @@ class Game {
     t.status = 'active';
     t.disqualifiedAt = null;
     t.eliminatedInRound = null;
+    t.flags = [];
+    t.lastFlagAt = null;
 
     if (!s.activeTeamIds.includes(teamId)) s.activeTeamIds.push(teamId);
 
@@ -824,6 +827,7 @@ class Game {
       t.latency = 0;
       t.eliminatedInRound = null;
       t.finalRank = null;
+      t.flags = [];
       if (t.status !== 'registered') t.status = 'approved';
     });
     this.onChange();
@@ -977,9 +981,7 @@ class Game {
     const s = this.session;
     const n = Date.now();
 
-    if (s.state === 'SELECTION') {
-      return false;
-    }
+    if (s.state === 'SELECTION') return false;
 
     if (s.state === 'QUESTION_ACTIVE') {
       const q = this.currentQuestion();
@@ -1061,6 +1063,14 @@ function sanitizeForTeam(game, teamId) {
     out.questions = [...myQs, ...others];
   }
 
+  // Teams should not see other teams' flags
+  out.teams = out.teams.map(t => {
+    const copy = { ...t };
+    delete copy.flags;
+    delete copy.lastFlagAt;
+    return copy;
+  });
+
   return out;
 }
 
@@ -1104,8 +1114,6 @@ function setupSocket(io) {
   const game = new Game(() => broadcast());
   io.game = game;
   const socketTeam = new Map();
-  const pendingDisq = new Map();
-  const disqualifiedTeams = new Set();
 
   function broadcast() {
     io.to('admin').emit('state', snapshotAdmin(game));
@@ -1121,12 +1129,6 @@ function setupSocket(io) {
       active: activeAdminCount(),
       available: adminSlotsAvailable()
     });
-  }
-  function cancelPendingDisq(tid) {
-    if (tid && pendingDisq.has(tid)) {
-      clearTimeout(pendingDisq.get(tid));
-      pendingDisq.delete(tid);
-    }
   }
 
   setInterval(() => { if (game.tick()) broadcast(); }, CFG.TICK_MS);
@@ -1227,7 +1229,6 @@ function setupSocket(io) {
       socket.data.role = 'team';
       if (teamId && game.team(teamId)) {
         const t = game.team(teamId);
-        cancelPendingDisq(teamId);
 
         const s = game.session;
         if (s.state === 'SELECTION' && !s.selectionAnswers[teamId] &&
@@ -1262,13 +1263,12 @@ function setupSocket(io) {
 
     socket.on('team:ackInstructions', () => {
       const tid = socket.data.teamId;
-      if (tid) { cancelPendingDisq(tid); game.ackInstructions(tid); }
+      if (tid) game.ackInstructions(tid);
     });
 
     socket.on('team:answer', ({ questionId, answer }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       const result = game.submitAnswer({ teamId: tid, questionId, answer });
       if (result && result.privateUpdate) {
         socket.emit('state', sanitizeForTeam(game, tid));
@@ -1281,7 +1281,6 @@ function setupSocket(io) {
     socket.on('team:skipSelection', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       const r = game.skipSelectionQuestion({ teamId: tid });
       socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
@@ -1290,7 +1289,6 @@ function setupSocket(io) {
     socket.on('team:selectionBack', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       const r = game.selectionGoBack({ teamId: tid });
       socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
@@ -1299,7 +1297,6 @@ function setupSocket(io) {
     socket.on('team:selectionForward', (_, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       const r = game.selectionForward({ teamId: tid });
       socket.emit('state', sanitizeForTeam(game, tid));
       ack && ack(r);
@@ -1308,33 +1305,24 @@ function setupSocket(io) {
     socket.on('team:buzz', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       ack && ack(game.buzz({ teamId: tid, questionId }));
     });
     socket.on('team:challenge', ({ questionId }, ack) => {
       const tid = socket.data.teamId;
       if (!tid) return ack && ack({ ok: false });
-      cancelPendingDisq(tid);
       ack && ack(game.challenge({ teamId: tid, questionId }));
     });
 
-    socket.on('team:visibilityLost', () => {
+    socket.on('team:visibilityLost', ({ reason } = {}) => {
       const tid = socket.data.teamId;
       if (!tid) return;
-      const t = game.team(tid);
-      if (!t || t.status !== 'active') return;
-      if (pendingDisq.has(tid)) return;
+      game.addFlag(tid, reason || 'hidden');
+    });
 
-      const handle = setTimeout(() => {
-        pendingDisq.delete(tid);
-        const stillThere = [...socketTeam.values()].includes(tid);
-        if (stillThere) return;
-        disqualifiedTeams.add(tid);
-        game.disqualifyTeam(tid);
-        broadcast();
-      }, CFG.DISQUALIFY_GRACE_MS);
-
-      pendingDisq.set(tid, handle);
+    socket.on('team:suspicious', ({ reason } = {}) => {
+      const tid = socket.data.teamId;
+      if (!tid) return;
+      game.addFlag(tid, reason || 'suspicious');
     });
 
     const adminGuard = (fn) => (...args) => {
@@ -1350,6 +1338,10 @@ function setupSocket(io) {
     socket.on('admin:requalifyTeam',      adminGuard(({ teamId }, ack) => {
       const r = game.requalifyTeam(teamId);
       ack && ack(r);
+    }));
+    socket.on('admin:disqualifyTeam',     adminGuard(({ teamId }, ack) => {
+      game.disqualifyTeam(teamId);
+      ack && ack({ ok: true });
     }));
     socket.on('admin:sendToInstructions', adminGuard(() => game.sendToInstructions()));
     socket.on('admin:closeInstructions',  adminGuard(() => game.closeInstructions()));
@@ -1382,16 +1374,7 @@ function setupSocket(io) {
         const t = game.team(tid);
         if (t) {
           t.connected = false;
-          if (t.status === 'active' && !disqualifiedTeams.has(tid) && !pendingDisq.has(tid)) {
-            const handle = setTimeout(() => {
-              pendingDisq.delete(tid);
-              const stillThere = [...socketTeam.values()].includes(tid);
-              if (stillThere) return;
-              disqualifiedTeams.add(tid);
-              game.disqualifyTeam(tid);
-            }, CFG.DISQUALIFY_GRACE_MS);
-            pendingDisq.set(tid, handle);
-          }
+          game.addFlag(tid, 'disconnected');
         }
         broadcast();
       }
